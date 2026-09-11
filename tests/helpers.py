@@ -43,8 +43,14 @@ class NifiClient:
         nipyapi.utils.set_endpoint(self.api_url)
 
     def is_up(self) -> bool:
-        """Whether the NiFi API is answering."""
-        return bool(nipyapi.utils.is_endpoint_up(self.api_url))
+        """Whether the NiFi API is answering.
+
+        Probes /flow/about rather than the API root: NiFi serves nothing at
+        /nifi-api/ (it redirects there and returns 404), which nipyapi treats
+        as not ready. /flow/about needs no privileges, and once authentication
+        is enabled it returns 401, which nipyapi still counts as up.
+        """
+        return bool(nipyapi.utils.is_endpoint_up(f"{self.api_url}/flow/about"))
 
     def wait_until_ready(self, timeout: int = DEFAULT_TIMEOUT) -> None:
         """Block until the NiFi API answers, or raise.
