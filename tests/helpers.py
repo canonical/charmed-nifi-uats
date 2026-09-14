@@ -90,17 +90,14 @@ class NifiClient:
         except ApiException as e:
             raise NifiClientError(f"Failed to read system diagnostics: {e}") from e
 
-    def root_pg_id(self) -> str:
-        """The id of the root process group."""
-        self._activate()
-        return nipyapi.canvas.get_root_pg_id()
-
     def create_process_group(self, name: str, position: tuple[float, float] = (0, 0)):
         """Create a process group under the root, and return it."""
         self._activate()
         try:
             return nipyapi.canvas.create_process_group(
-                nipyapi.canvas.get_process_group(self.root_pg_id(), "id"), name, position
+                nipyapi.canvas.get_process_group(nipyapi.canvas.get_root_pg_id(), "id"),
+                name,
+                position,
             )
         except ApiException as e:
             raise NifiClientError(f"Failed to create process group {name!r}: {e}") from e

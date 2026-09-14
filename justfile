@@ -93,7 +93,16 @@ destroy model_name=MODEL_DEFAULT:
 
 # Run the framework's own tests, proving the fixtures attach to a deployment
 test-framework model_name=MODEL_DEFAULT:
-    uv tool run --python 3.12 tox -e framework -- --model=${model_name}
+    #!/usr/bin/bash
+    set -euxo pipefail
+
+    outputs=$(terraform -chdir=terraform output -json)
+    nifi_app=$(jq -er '.nifi_app_name.value' <<< "${outputs}")
+    # A null output is left out of state, so a disabled Traefik has no key here.
+    traefik_app=$(jq -r '.traefik_app_name.value // empty' <<< "${outputs}")
+
+    uv tool run --python 3.12 tox -e framework -- --model=${model_name} \
+        --nifi-app=${nifi_app} ${traefik_app:+--traefik-app=${traefik_app}}
 
 # Lint python code
 lint:

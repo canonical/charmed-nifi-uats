@@ -38,8 +38,9 @@ def pytest_addoption(parser):
     parser.addoption(
         "--traefik-app",
         action="store",
-        default="traefik",
-        help="Name of the Traefik application (default: traefik)",
+        default=None,
+        help="Name of the Traefik application. Omit when ingress is not enabled; "
+        "ingress tests are then skipped",
     )
 
 
@@ -49,7 +50,7 @@ def nifi_app(request: pytest.FixtureRequest) -> str:
 
 
 @pytest.fixture(scope="session")
-def traefik_app(request: pytest.FixtureRequest) -> str:
+def traefik_app(request: pytest.FixtureRequest) -> str | None:
     return request.config.getoption("--traefik-app")
 
 
@@ -90,8 +91,16 @@ def nifi_client(juju: jubilant.Juju, nifi_app: str, deployment_ready) -> NifiCli
 
 
 @pytest.fixture(scope="session")
-def ingress_url(juju: jubilant.Juju, traefik_app: str, nifi_app: str, deployment_ready) -> str:
-    """NiFi's external URL, as reported by Traefik's show-proxied-endpoints."""
+def ingress_url(
+    juju: jubilant.Juju, traefik_app: str | None, nifi_app: str, deployment_ready
+) -> str:
+    """NiFi's external URL, as reported by Traefik's show-proxied-endpoints.
+
+    Ingress is optional in the deployment, so every test depending on this
+    fixture is skipped when no Traefik application is given.
+    """
+    if not traefik_app:
+        pytest.skip("Ingress not enabled: no --traefik-app given")
     return proxied_url(juju, traefik_app, nifi_app)
 
 
