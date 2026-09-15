@@ -91,18 +91,42 @@ destroy model_name=MODEL_DEFAULT:
     fi
     just destroy-model ${model_name}
 
-# Run the framework's own tests, proving the fixtures attach to a deployment
-test-framework model_name=MODEL_DEFAULT:
+[private]
+app-flags:
     #!/usr/bin/bash
-    set -euxo pipefail
+    set -euo pipefail
 
     outputs=$(terraform -chdir=terraform output -json)
     nifi_app=$(jq -er '.nifi_app_name.value' <<< "${outputs}")
     # A null output is left out of state, so a disabled Traefik has no key here.
     traefik_app=$(jq -r '.traefik_app_name.value // empty' <<< "${outputs}")
 
-    uv tool run --python 3.12 tox -e framework -- --model=${model_name} \
-        --nifi-app=${nifi_app} ${traefik_app:+--traefik-app=${traefik_app}}
+    echo "--nifi-app=${nifi_app} ${traefik_app:+--traefik-app=${traefik_app}}"
+
+# Check the deployment is up before a suite runs, so that a failure inside the
+# suite is a real failure rather than an under-deployed model.
+[private]
+preflight model_name:
+    #!/usr/bin/bash
+    set -euo pipefail
+
+    outputs=$(terraform -chdir=terraform output -json)
+    export MODEL="${model_name}"
+    export NIFI_APP=$(jq -er '.nifi_app_name.value' <<< "${outputs}")
+    export TRAEFIK_APP=$(jq -r '.traefik_app_name.value // empty' <<< "${outputs}")
+
+    goss --gossfile tests/goss/goss.yaml validate --retry-timeout 900s --sleep 15s --color
+
+# Run one UAT suite by tox env name, after the pre-flight check
+uats-suite suite model_name=MODEL_DEFAULT: (preflight model_name)
+    uv tool run --python 3.12 tox -e ${suite} -- --model=${model_name} $(just app-flags)
+
+# Run the framework's own tests, proving the fixtures attach to a deployment
+test-framework model_name=MODEL_DEFAULT: (uats-suite "framework" model_name)
+
+# Run every UAT suite against one deployment
+uats model_name=MODEL_DEFAULT:
+    just test-framework ${model_name}
 
 # Lint python code
 lint:
@@ -116,3 +140,24 @@ format:
 fmt: (initialize)
     terraform -chdir=terraform fmt -recursive
     terraform -chdir=terraform validate
+
+# Collect Juju, Kubernetes and Terraform state for debugging a failed run
+collect-artifacts model_name=MODEL_DEFAULT out_dir="artifacts":
+    #!/usr/bin/bash
+    set -uo pipefail
+
+    mkdir -p "${out_dir}"
+
+    juju status --model ${model_name} --relations --storage > "${out_dir}/juju-status.txt" 2>&1
+    juju debug-log --model ${model_name} --replay --no-tail > "${out_dir}/juju-debug-log.txt" 2>&1
+
+    # Every pod in the model, so this stays correct as applications are added.
+    kubectl describe pods -n ${model_name} > "${out_dir}/kubectl-describe-pods.txt" 2>&1
+    kubectl logs -n ${model_name} --all-containers --ignore-errors \
+        --prefix --tail=2000 -l 'app.kubernetes.io/name' > "${out_dir}/pod-logs.txt" 2>&1
+
+    sudo k8s inspect --output-dir "${out_dir}" > "${out_dir}/k8s-inspect.txt" 2>&1
+    terraform -chdir=terraform state list > "${out_dir}/terraform-state.txt" 2>&1
+    df -h > "${out_dir}/disk.txt" 2>&1
+
+    echo "Artifacts written to ${out_dir}/"
