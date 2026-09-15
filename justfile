@@ -119,7 +119,15 @@ preflight model_name:
 
 # Run one UAT suite by tox env name, after the pre-flight check
 uats-suite suite model_name=MODEL_DEFAULT: (preflight model_name)
-    uv tool run --python 3.12 tox -e ${suite} -- --model=${model_name} $(just app-flags)
+    #!/usr/bin/bash
+    set -euxo pipefail
+
+    # Captured rather than substituted inline: a failing app-flags would
+    # otherwise leave the flags empty and the suite would run, and pass,
+    # against the default application names.
+    flags=$(just app-flags)
+
+    uv tool run --python 3.12 tox -e ${suite} -- --model=${model_name} ${flags}
 
 # Run the framework's own tests, proving the fixtures attach to a deployment
 test-framework model_name=MODEL_DEFAULT: (uats-suite "framework" model_name)
@@ -136,9 +144,13 @@ lint:
 format:
     uv tool run --python 3.12 tox -e format
 
-# Terraform format and validate
+# Apply terraform formatting
 fmt: (initialize)
     terraform -chdir=terraform fmt -recursive
+
+# Check terraform formatting and validate the root module, without rewriting files
+validate: (initialize)
+    terraform -chdir=terraform fmt -check -recursive
     terraform -chdir=terraform validate
 
 # Collect Juju, Kubernetes and Terraform state for debugging a failed run
