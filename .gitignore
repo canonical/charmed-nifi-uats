@@ -1,0 +1,21 @@
+# Terraform
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/*.tfvars
+*.tfstate
+*.tfstate.*
+
+# Python
+__pycache__/
+*.py[cod]
+.tox/
+.venv/
+*.egg-info/
+build/
+
+# UAT run output
+artifacts/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
