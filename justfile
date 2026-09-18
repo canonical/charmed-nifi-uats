@@ -91,8 +91,10 @@ destroy model_name=MODEL_DEFAULT:
     fi
     just destroy-model ${model_name}
 
+# Print the NiFi and Traefik application names from the Terraform outputs,
+# space-separated. The Traefik name is empty when ingress is not enabled.
 [private]
-app-flags:
+app-names:
     #!/usr/bin/bash
     set -euo pipefail
 
@@ -101,33 +103,30 @@ app-flags:
     # A null output is left out of state, so a disabled Traefik has no key here.
     traefik_app=$(jq -r '.traefik_app_name.value // empty' <<< "${outputs}")
 
-    echo "--nifi-app=${nifi_app} ${traefik_app:+--traefik-app=${traefik_app}}"
+    echo "${nifi_app} ${traefik_app}"
 
 # Check the deployment is up before a suite runs, so that a failure inside the
 # suite is a real failure rather than an under-deployed model.
 [private]
-preflight model_name:
-    #!/usr/bin/bash
-    set -euo pipefail
-
-    outputs=$(terraform -chdir=terraform output -json)
-    export MODEL="${model_name}"
-    export NIFI_APP=$(jq -er '.nifi_app_name.value' <<< "${outputs}")
-    export TRAEFIK_APP=$(jq -r '.traefik_app_name.value // empty' <<< "${outputs}")
-
-    goss --gossfile tests/goss/goss.yaml validate --retry-timeout 900s --sleep 15s --color
+preflight model_name nifi_app traefik_app="":
+    MODEL="${model_name}" NIFI_APP="${nifi_app}" TRAEFIK_APP="${traefik_app}" \
+        goss --gossfile tests/goss/goss.yaml validate --retry-timeout 900s --sleep 15s --color
 
 # Run one UAT suite by tox env name, after the pre-flight check
-uats-suite suite model_name=MODEL_DEFAULT: (preflight model_name)
+uats-suite suite model_name=MODEL_DEFAULT:
     #!/usr/bin/bash
     set -euxo pipefail
 
-    # Captured rather than substituted inline: a failing app-flags would
-    # otherwise leave the flags empty and the suite would run, and pass,
-    # against the default application names.
-    flags=$(just app-flags)
+    # Captured into a variable before splitting: a failed command substitution
+    # inside `read <<<` does not trip `set -e`, so the suite would otherwise run,
+    # and pass, against empty application names.
+    names=$(just app-names)
+    read -r nifi_app traefik_app <<< "${names}"
 
-    uv tool run --python 3.12 tox -e ${suite} -- --model=${model_name} ${flags}
+    just preflight ${model_name} ${nifi_app} "${traefik_app}"
+
+    uv tool run --python 3.12 tox -e ${suite} -- --model=${model_name} \
+        --nifi-app=${nifi_app} ${traefik_app:+--traefik-app=${traefik_app}}
 
 # Run the framework's own tests, proving the fixtures attach to a deployment
 test-framework model_name=MODEL_DEFAULT: (uats-suite "framework" model_name)
