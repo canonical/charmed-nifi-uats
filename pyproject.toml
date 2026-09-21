@@ -60,3 +60,6 @@ max-complexity = 10
 minversion = "8.0"
 log_cli_level = "INFO"
 addopts = "--tb=native --verbose"
+markers = [
+	"deploys: deploys its own charm into a temporary model; deselect with -m \"not deploys\"",
+]
