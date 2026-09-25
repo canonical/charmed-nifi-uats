@@ -74,6 +74,7 @@ jobs:
         suite:
           - framework
           - deployment
+          - ingress
       fail-fast: false
     concurrency:
       group: ${{ github.workflow }}-${{ github.ref }}-${{ matrix.suite }}
