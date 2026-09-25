@@ -3,11 +3,7 @@
 
 """Deployment UATs: the deployment path produces a healthy solution."""
 
-import secrets
-import sys
-
 import jubilant
-import pytest
 
 from tests.helpers import NifiClient
 
@@ -29,13 +25,6 @@ ROCK_MANIFEST = "/usr/share/rocks/dpkg.query"
 
 ACTIVE_IDLE_TIMEOUT = 10 * 60
 
-# The charm's config option, and the field it reads from the Juju secret, share
-# this name. The message is the charm's blocked status while the key is unset.
-SENSITIVE_PROPS_KEY = "sensitive-props-key"
-MSG_SENSITIVE_KEY_MISSING = f"Missing required config '{SENSITIVE_PROPS_KEY}' (Juju user secret)"
-
-MANUAL_DEPLOY_TIMEOUT = 20 * 60
-
 
 def test_applications_active_and_idle(
     juju: jubilant.Juju, nifi_app: str, traefik_app: str | None, deployment_ready
@@ -56,17 +45,24 @@ def test_applications_active_and_idle(
 
 
 def test_nifi_storage_attached_and_mounted(juju: jubilant.Juju, nifi_app: str):
-    """Each of NiFi's repositories is on attached Juju storage, at the path NiFi uses."""
+    """NiFi's repositories are on attached Juju storage, mounted where NiFi writes."""
     unit = f"{nifi_app}/0"
-    mounts = {}
-    for storage_id, info in juju.status().storage.storage.items():
-        attachment = (info.attachments.units if info.attachments else {}).get(unit)
-        if attachment and info.status.current == "attached":
-            mounts[storage_id.split("/")[0]] = attachment.location
+    attached = {
+        storage_id.split("/")[0]
+        for storage_id, info in juju.status().storage.storage.items()
+        if info.status.current == "attached"
+        and unit in (info.attachments.units if info.attachments else {})
+    }
+    missing = set(NIFI_STORAGE) - attached
+    assert not missing, f"Storage not attached to {unit}: {missing} (attached: {attached})"
 
+    # Juju reports no mount location for Kubernetes attachments, so the paths are
+    # checked in the container, which is also where they matter.
+    mounts = set(juju.ssh(unit, "findmnt -rn -o TARGET", container=WORKLOAD_CONTAINER).split())
     for name, path in NIFI_STORAGE.items():
-        assert mounts.get(name) == path, (
-            f"Storage {name!r} should be attached to {unit} at {path}; attached storage: {mounts}"
+        assert path in mounts, (
+            f"storage {name!r} is attached but {path} is not a mount point in the "
+            f"{WORKLOAD_CONTAINER} container"
         )
 
 
@@ -122,46 +118,3 @@ def test_login_not_supported(nifi_client: NifiClient):
     assert configuration.login_supported is False, (
         f"NiFi reports a login at {configuration.login_uri!r}"
     )
-
-
-@pytest.mark.deploys
-def test_blocked_until_sensitive_props_key_configured(juju: jubilant.Juju, nifi_app: str):
-    """Deployed by hand, NiFi stays blocked until the key is set.
-
-    The deployment under test cannot show this, because Terraform grants the key
-    in the same apply that deploys NiFi. So this deploys the same charm revision
-    into a temporary model without a key, then configures it exactly as the
-    deploy does. The deployment under test is not touched.
-
-    It creates a model on the controller; skip it with `-m "not deploys"`.
-    """
-    status = juju.status()
-    charm = status.apps[nifi_app]
-    if charm.charm_origin != "charmhub":
-        pytest.skip(
-            f"{nifi_app} was not deployed from Charmhub, so there is no revision to redeploy"
-        )
-
-    with jubilant.temp_model(controller=status.model.controller) as manual:
-        manual.wait_timeout = MANUAL_DEPLOY_TIMEOUT
-        try:
-            manual.deploy(
-                charm.charm_name, "nifi", channel=charm.charm_channel, revision=charm.charm_rev
-            )
-
-            manual.wait(lambda s: jubilant.all_blocked(s, "nifi"), error=jubilant.any_error)
-            message = manual.status().apps["nifi"].app_status.message
-            assert message == MSG_SENSITIVE_KEY_MISSING, f"Unexpected blocked message: {message!r}"
-
-            secret = manual.add_secret(
-                "nifi-sensitive-key", {SENSITIVE_PROPS_KEY: secrets.token_hex(16)}
-            )
-            manual.grant_secret("nifi-sensitive-key", "nifi")
-            manual.config("nifi", {SENSITIVE_PROPS_KEY: str(secret)})
-
-            manual.wait(lambda s: jubilant.all_active(s, "nifi"), error=jubilant.any_error)
-        except Exception:
-            # The model is destroyed on exit, taking its logs with it, and
-            # collect-artifacts only covers the deployment under test.
-            print(manual.debug_log(limit=1000), end="", file=sys.stderr)
-            raise

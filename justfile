@@ -117,6 +117,10 @@ uats-suite suite model_name=MODEL_DEFAULT:
     #!/usr/bin/bash
     set -euxo pipefail
 
+    # Collect diagnostics if the suite fails, so a local run leaves the same
+    # evidence the CI job uploads.
+    trap 'rc=$?; if [ ${rc} -ne 0 ]; then just collect-artifacts ${model_name}; fi; exit ${rc}' EXIT
+
     # Captured into a variable before splitting: a failed command substitution
     # inside `read <<<` does not trip `set -e`, so the suite would otherwise run,
     # and pass, against empty application names.
