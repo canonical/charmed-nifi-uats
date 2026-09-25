@@ -90,6 +90,26 @@ class NifiClient:
         except ApiException as e:
             raise NifiClientError(f"Failed to read system diagnostics: {e}") from e
 
+    def current_user(self):
+        """The identity and permissions NiFi grants to this client's requests."""
+        self._activate()
+        try:
+            return nipyapi.nifi.FlowApi().get_current_user()
+        except ApiException as e:
+            raise NifiClientError(f"Failed to read the current user: {e}") from e
+
+    def authentication_configuration(self):
+        """Whether NiFi offers a login, and where, from /authentication/configuration."""
+        self._activate()
+        try:
+            return (
+                nipyapi.nifi.AuthenticationApi()
+                .get_authentication_configuration()
+                .authentication_configuration
+            )
+        except ApiException as e:
+            raise NifiClientError(f"Failed to read the authentication configuration: {e}") from e
+
     def create_process_group(self, name: str, position: tuple[float, float] = (0, 0)):
         """Create a process group under the root, and return it."""
         self._activate()
