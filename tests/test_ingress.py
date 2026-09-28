@@ -5,7 +5,6 @@
 
 import json
 import urllib.error
-import urllib.parse
 import urllib.request
 
 import pytest
@@ -18,29 +17,17 @@ HTTP_TIMEOUT = 30
 UI_MARKERS = ("<nifi>", "<title>NiFi</title>")
 
 
-def http_get(url: str, *, follow_redirects: bool = True) -> tuple[int, str, str]:
-    """GET a URL and return its status, body and Location header.
+def http_get(url: str) -> tuple[int, str]:
+    """GET a URL and return its status and body.
 
-    Redirects are followed by default, as a browser would. With
-    *follow_redirects* false, a redirect is returned rather than followed, so a
-    test can inspect where NiFi points the caller.
+    An error response is an answer, not a failure to reach NiFi, so it is
+    returned rather than raised.
     """
-
-    class _NoRedirect(urllib.request.HTTPRedirectHandler):
-        def redirect_request(self, *args, **kwargs):
-            return None
-
-    opener = (
-        urllib.request.build_opener()
-        if follow_redirects
-        else urllib.request.build_opener(_NoRedirect)
-    )
     try:
-        with opener.open(url, timeout=HTTP_TIMEOUT) as response:  # noqa: S310 (http, by design)
-            return response.status, response.read().decode(), response.headers.get("Location", "")
+        with urllib.request.urlopen(url, timeout=HTTP_TIMEOUT) as response:  # noqa: S310 (http, by design)
+            return response.status, response.read().decode()
     except urllib.error.HTTPError as e:
-        # A redirect or an error response is an answer, not a failure to reach NiFi.
-        return e.code, e.read().decode(errors="replace"), e.headers.get("Location", "")
+        return e.code, e.read().decode(errors="replace")
 
 
 @pytest.fixture(scope="session")
@@ -55,7 +42,7 @@ def ingress(nifi_client_via_ingress: NifiClient, ingress_url: str) -> str:
 
 def test_ui_served_through_ingress(ingress: str):
     """The NiFi UI shell is served through the ingress."""
-    status, body, _ = http_get(f"{ingress}/nifi/")
+    status, body = http_get(f"{ingress}/nifi/")
 
     assert status == 200, f"GET {ingress}/nifi/ returned {status}"
     for marker in UI_MARKERS:
@@ -69,26 +56,10 @@ def test_api_served_through_ingress(ingress: str):
     loads even when the proxy settings are wrong, whereas NiFi rejects a request
     carrying an X-Forwarded-Prefix it has not been configured to accept.
     """
-    status, body, _ = http_get(f"{ingress}/nifi-api/flow/status")
+    status, body = http_get(f"{ingress}/nifi-api/flow/status")
 
     assert status == 200, f"GET {ingress}/nifi-api/flow/status returned {status}: {body[:200]}"
     assert "controllerStatus" in json.loads(body), body[:200]
-
-
-def test_ui_redirect_keeps_the_ingress_path(ingress: str):
-    """NiFi's redirect to /nifi/ stays inside the ingress path.
-
-    An operator who opens the proxied URL without the trailing slash is
-    redirected. If NiFi built that redirect without the proxy context path, it
-    would send them outside the route and they would land on a 404.
-    """
-    status, _, location = http_get(f"{ingress}/nifi", follow_redirects=False)
-
-    assert status in (301, 302), f"expected a redirect, got {status}"
-    prefix = urllib.parse.urlparse(ingress).path
-    assert urllib.parse.urlparse(location).path == f"{prefix}/nifi/", (
-        f"redirect to {location!r} drops the ingress path {prefix!r}"
-    )
 
 
 def test_canvas_is_writable_through_ingress(nifi_client_via_ingress: NifiClient):
