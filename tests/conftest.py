@@ -116,7 +116,10 @@ def nifi_client_via_ingress(ingress_url: str) -> NifiClient:
 def process_group(nifi_client: NifiClient):
     """Factory creating process groups that are deleted when the test ends.
 
-    Keeps the canvas clean so a suite can be re-run against the same deployment.
+    The name is given a random suffix, so leftovers from an interrupted run
+    cannot collide, and the created entity is returned: use its `component.name`
+    rather than the name passed in. Keeps the canvas clean so a suite can be
+    re-run against the same deployment.
     """
     created = []
 

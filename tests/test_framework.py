@@ -43,6 +43,5 @@ def test_client_round_trips_a_process_group(nifi_client: NifiClient):
 
 def test_process_group_factory_creates_group(nifi_client: NifiClient, process_group):
     """The process_group fixture creates a group; it deletes it on teardown."""
-    name = "uat-framework-factory"
-    process_group(name)
-    assert name in nifi_client.list_process_group_names()
+    pg = process_group("uat-framework-factory")
+    assert pg.component.name in nifi_client.list_process_group_names()
