@@ -73,6 +73,7 @@ jobs:
         # One entry per tox env. Scenario suites are added by their own tickets.
         suite:
           - framework
+          - deployment
       fail-fast: false
     concurrency:
       group: ${{ github.workflow }}-${{ github.ref }}-${{ matrix.suite }}
@@ -80,9 +81,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
-
-      - name: Maximize runner disk
-        uses: jlumbroso/free-disk-space@v1.3.1
 
       - name: Set up operator environment
         run: |

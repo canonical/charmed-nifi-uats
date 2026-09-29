@@ -117,6 +117,10 @@ uats-suite suite model_name=MODEL_DEFAULT:
     #!/usr/bin/bash
     set -euxo pipefail
 
+    # Collect diagnostics if the suite fails, so a local run leaves the same
+    # evidence the CI job uploads.
+    trap 'rc=$?; if [ ${rc} -ne 0 ]; then just collect-artifacts ${model_name}; fi; exit ${rc}' EXIT
+
     # Captured into a variable before splitting: a failed command substitution
     # inside `read <<<` does not trip `set -e`, so the suite would otherwise run,
     # and pass, against empty application names.
@@ -131,9 +135,13 @@ uats-suite suite model_name=MODEL_DEFAULT:
 # Run the framework's own tests, proving the fixtures attach to a deployment
 test-framework model_name=MODEL_DEFAULT: (uats-suite "framework" model_name)
 
+# Run the deployment UATs
+uats-deployment model_name=MODEL_DEFAULT: (uats-suite "deployment" model_name)
+
 # Run every UAT suite against one deployment
 uats model_name=MODEL_DEFAULT:
     just test-framework ${model_name}
+    just uats-deployment ${model_name}
 
 # Lint python code
 lint:
