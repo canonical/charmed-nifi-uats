@@ -9,7 +9,7 @@ These prove the fixtures and the NiFi client attach to a deployment and work.
 import jubilant
 import pytest
 
-from tests.helpers import NifiClient
+from tests.helpers import NifiClient, unique_name
 
 
 def test_juju_fixture_targets_requested_model(juju: jubilant.Juju, request: pytest.FixtureRequest):
@@ -31,12 +31,12 @@ def test_nifi_client_reaches_nifi_through_ingress(nifi_client_via_ingress: NifiC
 
 def test_client_round_trips_a_process_group(nifi_client: NifiClient):
     """The client can create a process group, see it, and delete it again."""
-    name = "uat-framework-round-trip"
-    nifi_client.create_process_group(name)
+    name = unique_name("uat-framework-round-trip")
+    pg = nifi_client.create_process_group(name)
     try:
         assert name in nifi_client.list_process_group_names()
     finally:
-        nifi_client.delete_process_group(name)
+        nifi_client.delete_process_group(pg)
 
     assert name not in nifi_client.list_process_group_names()
 

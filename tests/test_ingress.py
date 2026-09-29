@@ -9,7 +9,7 @@ import urllib.request
 
 import pytest
 
-from tests.helpers import NifiClient
+from tests.helpers import NifiClient, unique_name
 
 HTTP_TIMEOUT = 30
 
@@ -64,9 +64,9 @@ def test_api_served_through_ingress(ingress: str):
 
 def test_canvas_is_writable_through_ingress(nifi_client_via_ingress: NifiClient):
     """The API is usable through the ingress, not only readable."""
-    name = "uat-ingress-write"
-    nifi_client_via_ingress.create_process_group(name)
+    name = unique_name("uat-ingress-write")
+    pg = nifi_client_via_ingress.create_process_group(name)
     try:
         assert name in nifi_client_via_ingress.list_process_group_names()
     finally:
-        nifi_client_via_ingress.delete_process_group(name)
+        nifi_client_via_ingress.delete_process_group(pg)
