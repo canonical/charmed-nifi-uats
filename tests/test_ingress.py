@@ -56,10 +56,18 @@ def test_api_served_through_ingress(ingress: str):
     loads even when the proxy settings are wrong, whereas NiFi rejects a request
     carrying an X-Forwarded-Prefix it has not been configured to accept.
     """
-    status, body = http_get(f"{ingress}/nifi-api/flow/status")
+    url = f"{ingress}/nifi-api/flow/status"
+    status, body = http_get(url)
 
-    assert status == 200, f"GET {ingress}/nifi-api/flow/status returned {status}: {body[:200]}"
-    assert "controllerStatus" in json.loads(body), body[:200]
+    assert status == 200, f"GET {url} returned {status}: {body[:200]}"
+    # Parsed inside a try so a 200 carrying something other than JSON fails with
+    # the response text, rather than a bare JSONDecodeError.
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError as e:
+        raise AssertionError(f"GET {url} answered 200 with a non-JSON body: {body[:200]}") from e
+
+    assert "controllerStatus" in payload, body[:200]
 
 
 def test_canvas_is_writable_through_ingress(nifi_client_via_ingress: NifiClient):
