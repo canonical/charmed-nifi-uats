@@ -6,6 +6,7 @@
 import json
 import logging
 import time
+import uuid
 
 import jubilant
 import nipyapi
@@ -127,16 +128,23 @@ class NifiClient:
         self._activate()
         return [pg.component.name for pg in nipyapi.canvas.list_all_process_groups()]
 
-    def delete_process_group(self, name: str) -> None:
-        """Delete a process group by name. A missing group is not an error."""
+    def delete_process_group(self, process_group) -> None:
+        """Delete the process group returned by :meth:`create_process_group`.
+
+        Takes the entity rather than a name: NiFi allows duplicate names, so a
+        name lookup could delete a group this client never created.
+        """
         self._activate()
-        pg = nipyapi.canvas.get_process_group(name)
-        if pg is None:
-            return
         try:
-            nipyapi.canvas.delete_process_group(pg, force=True)
+            nipyapi.canvas.delete_process_group(process_group, force=True)
         except ApiException as e:
+            name = process_group.component.name if process_group.component else "?"
             raise NifiClientError(f"Failed to delete process group {name!r}: {e}") from e
+
+
+def unique_name(prefix: str) -> str:
+    """A canvas object name unlikely to collide with another run's leftovers."""
+    return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
 
 def unit_address(juju: jubilant.Juju, app: str, unit: int = 0) -> str:

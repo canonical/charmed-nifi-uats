@@ -138,10 +138,14 @@ test-framework model_name=MODEL_DEFAULT: (uats-suite "framework" model_name)
 # Run the deployment UATs
 uats-deployment model_name=MODEL_DEFAULT: (uats-suite "deployment" model_name)
 
+# Run the ingress UATs
+uats-ingress model_name=MODEL_DEFAULT: (uats-suite "ingress" model_name)
+
 # Run every UAT suite against one deployment
 uats model_name=MODEL_DEFAULT:
     just test-framework ${model_name}
     just uats-deployment ${model_name}
+    just uats-ingress ${model_name}
 
 # Lint python code
 lint:

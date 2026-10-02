@@ -15,7 +15,7 @@ import time
 import jubilant
 import pytest
 
-from tests.helpers import NifiClient, nifi_base_url, proxied_url
+from tests.helpers import NifiClient, nifi_base_url, proxied_url, unique_name
 
 logger = logging.getLogger(__name__)
 
@@ -116,19 +116,22 @@ def nifi_client_via_ingress(ingress_url: str) -> NifiClient:
 def process_group(nifi_client: NifiClient):
     """Factory creating process groups that are deleted when the test ends.
 
-    Keeps the canvas clean so a suite can be re-run against the same deployment.
+    The name is given a random suffix, so leftovers from an interrupted run
+    cannot collide, and the created entity is returned: use its `component.name`
+    rather than the name passed in. Keeps the canvas clean so a suite can be
+    re-run against the same deployment.
     """
-    created: list[str] = []
+    created = []
 
     def _create(name: str, position: tuple[float, float] = (0, 0)):
-        pg = nifi_client.create_process_group(name, position)
-        created.append(name)
+        pg = nifi_client.create_process_group(unique_name(name), position)
+        created.append(pg)
         return pg
 
     yield _create
 
-    for name in reversed(created):
+    for pg in reversed(created):
         try:
-            nifi_client.delete_process_group(name)
+            nifi_client.delete_process_group(pg)
         except Exception as e:  # noqa: BLE001 - cleanup must not mask a test failure
-            logger.warning("Could not delete process group %s: %s", name, e)
+            logger.warning("Could not delete process group %s: %s", pg.id, e)
