@@ -75,6 +75,7 @@ jobs:
           - framework
           - deployment
           - ingress
+          - flow
       fail-fast: false
     concurrency:
       group: ${{ github.workflow }}-${{ github.ref }}-${{ matrix.suite }}
