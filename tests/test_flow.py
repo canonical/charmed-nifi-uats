@@ -33,6 +33,8 @@ class Flow:
     source_id: str
     transform_id: str
     sink_id: str
+    connection_ids: tuple[str, ...]
+    bulletins: list
 
 
 def _processor_counters(client: NifiClient, pg_id: str) -> dict[str, tuple[int, int]]:
@@ -56,6 +58,16 @@ def _queued(client: NifiClient, pg_id: str) -> dict[str, int]:
     }
 
 
+def _drained(client: NifiClient, pg_id: str, connection_ids: tuple[str, ...]) -> bool:
+    """Whether every connection of the flow is reported and holds nothing.
+
+    Looked up by id rather than tested with ``any``: a connection absent from
+    the status must not read as drained.
+    """
+    queued = _queued(client, pg_id)
+    return all(queued.get(connection_id) == 0 for connection_id in connection_ids)
+
+
 @pytest.fixture(scope="module")
 def flow(nifi_client: NifiClient):
     """Build GenerateFlowFile -> UpdateAttribute -> LogAttribute, run it, then stop it.
@@ -67,43 +79,53 @@ def flow(nifi_client: NifiClient):
     client = nifi_client
     group = client.create_process_group(unique_name("uat-flow"))
 
-    source = client.create_processor(
-        group,
-        SOURCE_TYPE,
-        "generate",
-        nipyapi.nifi.ProcessorConfigDTO(
-            scheduling_period="1 sec",
-            properties={"Custom Text": "uat payload", "Batch Size": "1", "File Size": "0B"},
-        ),
-    )
-    transform = client.create_processor(
-        group,
-        TRANSFORM_TYPE,
-        "mark",
-        nipyapi.nifi.ProcessorConfigDTO(properties={MARKER_KEY: MARKER_VALUE}),
-        position=(0, 200),
-    )
-    sink = client.create_processor(
-        group,
-        SINK_TYPE,
-        "sink",
-        nipyapi.nifi.ProcessorConfigDTO(auto_terminated_relationships=["success"]),
-        position=(0, 400),
-    )
-    client.connect(source, transform, ["success"])
-    client.connect(transform, sink, ["success"])
-
-    client.schedule_process_group(group.id, True)
+    # Everything after the group exists runs inside the try, so a flow that
+    # fails half-built is still taken off the canvas.
     try:
+        source = client.create_processor(
+            group,
+            SOURCE_TYPE,
+            "generate",
+            nipyapi.nifi.ProcessorConfigDTO(
+                scheduling_period="1 sec",
+                properties={"Custom Text": "uat payload", "Batch Size": "1", "File Size": "0B"},
+            ),
+        )
+        transform = client.create_processor(
+            group,
+            TRANSFORM_TYPE,
+            "mark",
+            nipyapi.nifi.ProcessorConfigDTO(properties={MARKER_KEY: MARKER_VALUE}),
+            position=(0, 200),
+        )
+        sink = client.create_processor(
+            group,
+            SINK_TYPE,
+            "sink",
+            nipyapi.nifi.ProcessorConfigDTO(auto_terminated_relationships=["success"]),
+            position=(0, 400),
+        )
+        connection_ids = (
+            client.connect(source, transform, ["success"]).id,
+            client.connect(transform, sink, ["success"]).id,
+        )
+
+        client.schedule_process_group(group.id, True)
         _wait_until(
             lambda: _processor_counters(client, group.id).get(sink.id, (0, 0))[0] > 0,
             "a FlowFile to reach the sink",
         )
         # Stop only the source, so anything in flight still reaches the sink.
         client.schedule_processor(source, False)
-        _wait_until(lambda: not any(_queued(client, group.id).values()), "the queues to drain")
+        _wait_until(lambda: _drained(client, group.id, connection_ids), "the queues to drain")
         client.schedule_process_group(group.id, False)
-        yield Flow(group.id, source.id, transform.id, sink.id)
+
+        # Read here, while the run is fresh: NiFi's bulletin repository drops
+        # anything older than five minutes, so a check reading the board after
+        # the waits above could miss an error raised early in the run.
+        bulletins = client.bulletins(group.id)
+
+        yield Flow(group.id, source.id, transform.id, sink.id, connection_ids, bulletins)
     finally:
         client.schedule_process_group(group.id, False)
         nipyapi.canvas.purge_process_group(group, stop=True)
@@ -133,7 +155,11 @@ def test_flowfiles_move_through_every_processor(nifi_client: NifiClient, flow: F
 def test_queues_drained(nifi_client: NifiClient, flow: Flow):
     """No FlowFile is left waiting, so the flow ran to completion."""
     queued = _queued(nifi_client, flow.pg_id)
-    assert not any(queued.values()), f"FlowFiles still queued: {queued}"
+
+    for connection_id in flow.connection_ids:
+        assert queued.get(connection_id) == 0, (
+            f"connection {connection_id} reports {queued.get(connection_id)!r}, queues: {queued}"
+        )
 
 
 def test_attribute_recorded_in_provenance(nifi_client: NifiClient, flow: Flow):
@@ -154,7 +180,11 @@ def test_attribute_recorded_in_provenance(nifi_client: NifiClient, flow: Flow):
     assert marker[0].value == MARKER_VALUE, marker[0].value
 
 
-def test_no_error_bulletins(nifi_client: NifiClient, flow: Flow):
-    """The flow ran without NiFi reporting an error against it."""
-    errors = [b for b in nifi_client.bulletins(flow.pg_id) if b.level == "ERROR"]
+def test_no_error_bulletins(flow: Flow):
+    """The flow ran without NiFi reporting an error against it.
+
+    Asserted on the snapshot the fixture took when the run finished, not on a
+    fresh read, which the five-minute retention could have emptied by now.
+    """
+    errors = [b for b in flow.bulletins if b.level == "ERROR"]
     assert not errors, f"error bulletins raised: {[(b.source_name, b.message) for b in errors]}"
