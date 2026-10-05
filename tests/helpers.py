@@ -10,12 +10,22 @@ import uuid
 
 import jubilant
 import nipyapi
+from lightkube import Client
+from lightkube.core.exceptions import ApiError
+from lightkube.resources.core_v1 import Pod
 from nipyapi.nifi.rest import ApiException
 
 logger = logging.getLogger(__name__)
 
 NIFI_PORT = 8080
 DEFAULT_TIMEOUT = 300
+
+# Server-side jobs -- queue listings and provenance queries -- are submitted and
+# then polled until they report finished.
+REQUEST_TIMEOUT = 60
+
+WORKLOAD_CONTAINER = "nifi"
+NIFI_PROPERTIES = "/opt/nifi/conf/nifi.properties"
 
 
 class NifiClientError(Exception):
@@ -197,6 +207,102 @@ class NifiClient:
         self._activate()
         return nipyapi.canvas.get_bulletin_board(pg_id=pg_id)
 
+    def _await_request(self, poll, description: str):
+        """Poll a submitted NiFi request until it reports finished.
+
+        Raises:
+            NifiClientError: if the request has not finished in time.
+        """
+        deadline = time.monotonic() + REQUEST_TIMEOUT
+        while time.monotonic() < deadline:
+            result = poll()
+            if result.finished:
+                return result
+            time.sleep(1)
+        raise NifiClientError(f"{description} did not finish within {REQUEST_TIMEOUT}s")
+
+    def queued_flowfile_uuids(self, connection_id: str) -> list[str]:
+        """UUIDs of the FlowFiles waiting in a connection.
+
+        Listing a queue is a server-side job, so it is submitted, polled and
+        then deleted rather than left behind for the next caller to trip over.
+        """
+        self._activate()
+        api = nipyapi.nifi.FlowFileQueuesApi()
+        try:
+            listing = api.create_flow_file_listing(connection_id).listing_request
+        except ApiException as e:
+            raise NifiClientError(f"Failed to list queue {connection_id}: {e}") from e
+        try:
+            finished = self._await_request(
+                lambda: api.get_listing_request(connection_id, listing.id).listing_request,
+                f"queue listing for connection {connection_id}",
+            )
+            return [summary.uuid for summary in finished.flow_file_summaries or []]
+        finally:
+            api.delete_listing_request(connection_id, listing.id)
+
+    def flowfile_content(self, connection_id: str, uuid: str) -> str:
+        """The content of one FlowFile waiting in a connection."""
+        self._activate()
+        try:
+            return nipyapi.nifi.FlowFileQueuesApi().download_flow_file_content(connection_id, uuid)
+        except ApiException as e:
+            raise NifiClientError(f"Failed to read the content of FlowFile {uuid}: {e}") from e
+
+    def provenance_event_ids(self, component_id: str) -> list[int]:
+        """Ids of the provenance events a component recorded, from the repository.
+
+        A query rather than the latest-events endpoint: that one reads an
+        in-memory buffer holding only a component's newest events, which a
+        restarted instance starts empty, so it cannot show what persisted.
+        """
+        self._activate()
+        api = nipyapi.nifi.ProvenanceApi()
+        request = nipyapi.nifi.ProvenanceEntity(
+            provenance=nipyapi.nifi.ProvenanceDTO(
+                request=nipyapi.nifi.ProvenanceRequestDTO(
+                    search_terms={
+                        "ProcessorID": nipyapi.nifi.ProvenanceSearchValueDTO(value=component_id)
+                    },
+                    max_results=100,
+                    summarize=True,
+                )
+            )
+        )
+        try:
+            submitted = api.submit_provenance_request(request).provenance
+        except ApiException as e:
+            raise NifiClientError(f"Failed to query provenance for {component_id}: {e}") from e
+        try:
+            query = self._await_request(
+                lambda: api.get_provenance(submitted.id).provenance,
+                f"provenance query for {component_id}",
+            )
+            return sorted(e.event_id for e in query.results.provenance_events or [])
+        finally:
+            api.delete_provenance(submitted.id)
+
+    def process_group_component_ids(self, pg_id: str) -> set[str]:
+        """Ids of the processors and connections NiFi reports inside a process group.
+
+        Read back after a restart, this is the flow definition NiFi loaded from
+        its configuration file rather than the one the test built.
+        """
+        self._activate()
+        api = nipyapi.nifi.ProcessGroupsApi()
+        try:
+            processors = api.get_processors(pg_id).processors or []
+            connections = api.get_connections(pg_id).connections or []
+        except ApiException as e:
+            raise NifiClientError(f"Failed to read process group {pg_id}: {e}") from e
+        return {entity.id for entity in processors} | {entity.id for entity in connections}
+
+    def process_group_exists(self, pg_id: str) -> bool:
+        """Whether NiFi still resolves a process group by id."""
+        self._activate()
+        return nipyapi.canvas.get_process_group(pg_id, "id") is not None
+
     def list_process_group_names(self) -> list[str]:
         """Names of every process group below the root."""
         self._activate()
@@ -233,6 +339,58 @@ def best_effort(description: str, action) -> None:
 def unique_name(prefix: str) -> str:
     """A canvas object name unlikely to collide with another run's leftovers."""
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
+
+
+def pod_uid(kube: Client, pod: str) -> str:
+    """The UID of a pod, which is a new value once the pod has been replaced."""
+    return kube.get(Pod, name=pod).metadata.uid
+
+
+def replace_pod(kube: Client, pod: str, timeout: int = DEFAULT_TIMEOUT) -> str:
+    """Delete a pod and wait for a ready replacement, returning its new UID.
+
+    The pod is deleted rather than the workload restarted: only a replaced pod
+    re-attaches the volumes, which is what the persistence checks are about.
+
+    Raises:
+        TimeoutError: if no ready replacement appears within *timeout*.
+    """
+    previous = pod_uid(kube, pod)
+    kube.delete(Pod, name=pod)
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            current = kube.get(Pod, name=pod)
+        except ApiError:
+            # Between the delete landing and the replacement being created.
+            time.sleep(5)
+            continue
+        if current.metadata.uid != previous and _pod_ready(current):
+            return current.metadata.uid
+        time.sleep(5)
+    raise TimeoutError(f"Pod {pod} was not replaced by a ready pod within {timeout}s")
+
+
+def _pod_ready(pod: Pod) -> bool:
+    """Whether a pod reports the Ready condition."""
+    conditions = (pod.status.conditions or []) if pod.status else []
+    return any(c.type == "Ready" and c.status == "True" for c in conditions)
+
+
+def sensitive_props_key_digest(juju: jubilant.Juju, unit: str) -> str:
+    """A digest of nifi.sensitive.props.key, for comparing it without reading it.
+
+    Hashed inside the container, because the key decrypts the flow and must not
+    reach a test report. The first grep requires a character after the "=", so a
+    missing or blank key fails here instead of hashing nothing and comparing
+    equal on both sides of a restart.
+    """
+    command = (
+        f"grep -q '^nifi.sensitive.props.key=.' {NIFI_PROPERTIES} && "
+        f"grep '^nifi.sensitive.props.key=' {NIFI_PROPERTIES} | sha256sum | cut -d' ' -f1"
+    )
+    return juju.ssh(unit, command, container=WORKLOAD_CONTAINER).strip()
 
 
 def unit_address(juju: jubilant.Juju, app: str, unit: int = 0) -> str:

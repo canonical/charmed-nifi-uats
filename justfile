@@ -138,6 +138,9 @@ test-framework model_name=MODEL_DEFAULT: (uats-suite "framework" model_name)
 # Run the deployment UATs
 uats-deployment model_name=MODEL_DEFAULT: (uats-suite "deployment" model_name)
 
+# Run the persistence UATs
+uats-persistence model_name=MODEL_DEFAULT: (uats-suite "persistence" model_name)
+
 # Run the ingress UATs
 uats-ingress model_name=MODEL_DEFAULT: (uats-suite "ingress" model_name)
 
@@ -148,6 +151,7 @@ uats-flow model_name=MODEL_DEFAULT: (uats-suite "flow" model_name)
 uats model_name=MODEL_DEFAULT:
     just test-framework ${model_name}
     just uats-deployment ${model_name}
+    just uats-persistence ${model_name}
     just uats-ingress ${model_name}
     just uats-flow ${model_name}
 

@@ -13,6 +13,7 @@ uats = [
 	"pytest>=8.0",
 	"jubilant>=1.5.0",
 	"nipyapi>=1.7.0",
+	"lightkube>=1.0.0",
 ]
 
 lint = [

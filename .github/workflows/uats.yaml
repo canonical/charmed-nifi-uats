@@ -74,6 +74,7 @@ jobs:
         suite:
           - framework
           - deployment
+          - persistence
           - ingress
           - flow
       fail-fast: false
