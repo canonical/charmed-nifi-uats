@@ -204,7 +204,8 @@ def test_flowfile_content_survived(restarted: tuple[State, State]):
     assert before.first_content == PAYLOAD, before.first_content
     assert after.first_content == before.first_content
 
-#TODO: Remove the xfail marker once the charm configures WriteAheadProvenanceRepository.
+
+# TODO: Remove the xfail marker once the charm configures WriteAheadProvenanceRepository.
 @pytest.mark.xfail(
     reason=(
         "The charm does not set nifi.provenance.repository.implementation, so NiFi falls back to "
