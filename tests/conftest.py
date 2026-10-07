@@ -100,7 +100,6 @@ def kube(juju: jubilant.Juju) -> Client:
     configuration comes from the environment, as the CI job writes it to
     ~/.kube/config before the suites run.
     """
-
     assert juju.model, "No model on the jubilant client: pass --model"
     return Client(namespace=juju.model)
 

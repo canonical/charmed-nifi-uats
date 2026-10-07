@@ -191,4 +191,24 @@ collect-artifacts model_name=MODEL_DEFAULT out_dir="artifacts":
     terraform -chdir=terraform state list > "${out_dir}/terraform-state.txt" 2>&1
     df -h > "${out_dir}/disk.txt" 2>&1
 
+    # Report what each command actually produced.
+    # Named without .txt so the glob below does not list the manifest itself.
+    manifest="${out_dir}/MANIFEST"
+    : > "${manifest}"
+    empty=0
+    for file in "${out_dir}"/*.txt; do
+        bytes=$(wc -c < "${file}")
+        if [ "${bytes}" -eq 0 ]; then
+            # Counted here rather than in a pipeline: `for ... done | tee` runs the
+            # loop in a subshell, which would discard the count.
+            empty=$((empty + 1))
+            printf 'EMPTY   %s\n' "${file}" | tee -a "${manifest}"
+        else
+            printf '%7s %s\n' "${bytes}" "${file}" | tee -a "${manifest}"
+        fi
+    done
+
+    if [ "${empty}" -ne 0 ]; then
+        echo "WARNING: ${empty} artifact file(s) are empty; the commands that write them produced no output" >&2
+    fi
     echo "Artifacts written to ${out_dir}/"
