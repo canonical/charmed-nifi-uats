@@ -93,8 +93,7 @@ destroy model_name=MODEL_DEFAULT:
 
 # Print the application names from the Terraform outputs, one per line, in the
 # order NiFi, Traefik, git-integrator. The optional ones are blank lines when
-# they are not deployed; one per line rather than space-separated, so a missing
-# Traefik cannot be mistaken for a missing git-integrator.
+# they are not deployed
 [private]
 app-names:
     #!/usr/bin/bash
