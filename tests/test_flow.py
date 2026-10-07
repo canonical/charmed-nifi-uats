@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import nipyapi
 import pytest
 
-from tests.helpers import NifiClient, unique_name
+from tests.helpers import NifiClient, best_effort, unique_name
 
 # Set by UpdateAttribute, then looked for on the provenance event it records.
 MARKER_KEY = "uat.marker"
@@ -76,13 +76,12 @@ def flow(nifi_client: NifiClient):
     the way they would in a flow an operator stops by hand. The process group is
     removed afterwards, leaving the canvas as it was found.
     """
-    client = nifi_client
-    group = client.create_process_group(unique_name("uat-flow"))
+    group = nifi_client.create_process_group(unique_name("uat-flow"))
 
     # Everything after the group exists runs inside the try, so a flow that
     # fails half-built is still taken off the canvas.
     try:
-        source = client.create_processor(
+        source = nifi_client.create_processor(
             group,
             SOURCE_TYPE,
             "generate",
@@ -91,14 +90,14 @@ def flow(nifi_client: NifiClient):
                 properties={"Custom Text": "uat payload", "Batch Size": "1", "File Size": "0B"},
             ),
         )
-        transform = client.create_processor(
+        transform = nifi_client.create_processor(
             group,
             TRANSFORM_TYPE,
             "mark",
             nipyapi.nifi.ProcessorConfigDTO(properties={MARKER_KEY: MARKER_VALUE}),
             position=(0, 200),
         )
-        sink = client.create_processor(
+        sink = nifi_client.create_processor(
             group,
             SINK_TYPE,
             "sink",
@@ -106,30 +105,42 @@ def flow(nifi_client: NifiClient):
             position=(0, 400),
         )
         connection_ids = (
-            client.connect(source, transform, ["success"]).id,
-            client.connect(transform, sink, ["success"]).id,
+            nifi_client.connect(source, transform, ["success"]).id,
+            nifi_client.connect(transform, sink, ["success"]).id,
         )
 
-        client.schedule_process_group(group.id, True)
+        nifi_client.schedule_process_group(group.id, True)
         _wait_until(
-            lambda: _processor_counters(client, group.id).get(sink.id, (0, 0))[0] > 0,
+            lambda: _processor_counters(nifi_client, group.id).get(sink.id, (0, 0))[0] > 0,
             "a FlowFile to reach the sink",
         )
         # Stop only the source, so anything in flight still reaches the sink.
-        client.schedule_processor(source, False)
-        _wait_until(lambda: _drained(client, group.id, connection_ids), "the queues to drain")
-        client.schedule_process_group(group.id, False)
+        nifi_client.schedule_processor(source, False)
+        _wait_until(lambda: _drained(nifi_client, group.id, connection_ids), "the queues to drain")
+        nifi_client.schedule_process_group(group.id, False)
 
         # Read here, while the run is fresh: NiFi's bulletin repository drops
         # anything older than five minutes, so a check reading the board after
         # the waits above could miss an error raised early in the run.
-        bulletins = client.bulletins(group.id)
+        bulletins = nifi_client.bulletins(group.id)
 
         yield Flow(group.id, source.id, transform.id, sink.id, connection_ids, bulletins)
     finally:
-        client.schedule_process_group(group.id, False)
-        nipyapi.canvas.purge_process_group(group, stop=True)
-        client.delete_process_group(nipyapi.canvas.get_process_group(group.id, "id"))
+        # Each step independently, so one failure neither hides the test's own
+        # failure nor stops the group being taken off the canvas.
+        best_effort(
+            "stopping the process group",
+            lambda: nifi_client.schedule_process_group(group.id, False),
+        )
+        best_effort(
+            "purging the queues", lambda: nipyapi.canvas.purge_process_group(group, stop=True)
+        )
+        best_effort(
+            "deleting the process group",
+            lambda: nifi_client.delete_process_group(
+                nipyapi.canvas.get_process_group(group.id, "id")
+            ),
+        )
 
 
 def _wait_until(condition, description: str) -> None:

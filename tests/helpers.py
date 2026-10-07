@@ -216,6 +216,20 @@ class NifiClient:
             raise NifiClientError(f"Failed to delete process group {name!r}: {e}") from e
 
 
+def best_effort(description: str, action) -> None:
+    """Run a teardown step, logging rather than raising when it fails.
+
+    A teardown that raises takes over as the reported failure, pushing the one
+    the test found into a chained traceback, and stops the steps after it from
+    running at all -- which is how a stopped-but-undeleted process group would
+    be left on the canvas.
+    """
+    try:
+        action()
+    except Exception as e:  # noqa: BLE001 - cleanup must not mask a test failure
+        logger.warning("Cleanup step failed, %s: %s", description, e)
+
+
 def unique_name(prefix: str) -> str:
     """A canvas object name unlikely to collide with another run's leftovers."""
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
