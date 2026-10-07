@@ -74,6 +74,7 @@ jobs:
         suite:
           - framework
           - deployment
+          - persistence
           - ingress
           - flow
       fail-fast: false
@@ -111,7 +112,9 @@ jobs:
 
       - name: Collect artifacts
         if: failure()
-        run: just collect-artifacts "${MODEL}" artifacts
+        # Only when the suite's own failure trap has not already collected:
+        # running it a second time truncates the files the first run wrote.
+        run: '[ -d artifacts ] || just collect-artifacts "${MODEL}" artifacts' 
 
       - name: Upload artifacts
         if: failure()
