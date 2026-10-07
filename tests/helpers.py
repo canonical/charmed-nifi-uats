@@ -24,6 +24,10 @@ DEFAULT_TIMEOUT = 300
 # then polled until they report finished.
 REQUEST_TIMEOUT = 60
 
+# Seconds Kubernetes allows NiFi to shut down before killing it. Well above the
+# second or so a clean shutdown takes, since an incomplete one loses provenance.
+SHUTDOWN_GRACE = 120
+
 WORKLOAD_CONTAINER = "nifi"
 NIFI_PROPERTIES = "/opt/nifi/conf/nifi.properties"
 
@@ -240,7 +244,12 @@ class NifiClient:
             )
             return [summary.uuid for summary in finished.flow_file_summaries or []]
         finally:
-            api.delete_listing_request(connection_id, listing.id)
+            # Best-effort: a failed delete must not turn a listing that worked
+            # into an error, nor take over from one that genuinely failed.
+            best_effort(
+                f"deleting listing request {listing.id}",
+                lambda: api.delete_listing_request(connection_id, listing.id),
+            )
 
     def flowfile_content(self, connection_id: str, uuid: str) -> str:
         """The content of one FlowFile waiting in a connection."""
@@ -281,7 +290,10 @@ class NifiClient:
             )
             return sorted(e.event_id for e in query.results.provenance_events or [])
         finally:
-            api.delete_provenance(submitted.id)
+            best_effort(
+                f"deleting provenance query {submitted.id}",
+                lambda: api.delete_provenance(submitted.id),
+            )
 
     def process_group_component_ids(self, pg_id: str) -> set[str]:
         """Ids of the processors and connections NiFi reports inside a process group.
@@ -346,17 +358,28 @@ def pod_uid(kube: Client, pod: str) -> str:
     return kube.get(Pod, name=pod).metadata.uid
 
 
-def replace_pod(kube: Client, pod: str, timeout: int = DEFAULT_TIMEOUT) -> str:
+def replace_pod(
+    kube: Client,
+    pod: str,
+    timeout: int = DEFAULT_TIMEOUT,
+    grace_period: int = SHUTDOWN_GRACE,
+) -> str:
     """Delete a pod and wait for a ready replacement, returning its new UID.
 
     The pod is deleted rather than the workload restarted: only a replaced pod
     re-attaches the volumes, which is what the persistence checks are about.
 
+    *grace_period* is given explicitly, and generously, because NiFi commits its
+    provenance index when it shuts down cleanly. Killed before it finishes, the
+    index is lost and the events it held stop being queryable even though the
+    journal is still on the volume -- so a hurried deletion would test how NiFi
+    copes with being killed rather than whether the volumes carry its state.
+
     Raises:
         TimeoutError: if no ready replacement appears within *timeout*.
     """
     previous = pod_uid(kube, pod)
-    kube.delete(Pod, name=pod)
+    kube.delete(Pod, name=pod, grace_period=grace_period)
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:

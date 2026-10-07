@@ -13,6 +13,7 @@ from lightkube import Client
 
 from tests.helpers import (
     NifiClient,
+    best_effort,
     nifi_base_url,
     pod_uid,
     replace_pod,
@@ -102,13 +103,12 @@ def restarted(juju: jubilant.Juju, kube: Client, nifi_client: NifiClient, nifi_a
     One restart serves every check, so each is a comparison of the same two
     readings rather than its own pod replacement.
     """
-    client = nifi_client
-    group = client.create_process_group(unique_name("uat-persistence"))
+    group = nifi_client.create_process_group(unique_name("uat-persistence"))
 
     # Everything after the group exists runs inside the try, so a flow that
     # fails half-built is still taken off the canvas.
     try:
-        source = client.create_processor(
+        source = nifi_client.create_processor(
             group,
             "GenerateFlowFile",
             "generate",
@@ -118,44 +118,53 @@ def restarted(juju: jubilant.Juju, kube: Client, nifi_client: NifiClient, nifi_a
             ),
         )
         # Left stopped, so FlowFiles collect in the queue instead of being consumed.
-        transform = client.create_processor(
+        transform = nifi_client.create_processor(
             group,
             "UpdateAttribute",
             "hold",
             nipyapi.nifi.ProcessorConfigDTO(properties={"uat.marker": "queued"}),
             position=(0, 200),
         )
-        connection = client.connect(source, transform, ["success"])
+        connection = nifi_client.connect(source, transform, ["success"])
         flow = Flow(group.id, source.id, transform.id, connection.id)
 
-        client.schedule_processor(source, True)
+        nifi_client.schedule_processor(source, True)
         _wait_until(
-            lambda: _queued_count(client, flow) >= QUEUE_TARGET,
+            lambda: _queued_count(nifi_client, flow) >= QUEUE_TARGET,
             f"{QUEUE_TARGET} FlowFiles to queue",
         )
         # Stopped so the queue holds still and the two readings are comparable.
-        client.schedule_processor(source, False)
+        nifi_client.schedule_processor(source, False)
 
         # Juju names the pod after the unit it runs, with the slash replaced.
         unit, pod = f"{nifi_app}/0", f"{nifi_app}-0"
-        before = _record(client, juju, kube, unit, pod, flow)
+        before = _record(nifi_client, juju, kube, unit, pod, flow)
 
         replace_pod(kube, pod)
         juju.wait(jubilant.all_active, delay=10)
 
-        # A replaced pod comes back on a new address, so the client bound to the
-        # old one can no longer reach NiFi.
-        client = NifiClient(nifi_base_url(juju, nifi_app))
-        client.wait_until_ready()
-        after = _record(client, juju, kube, unit, pod, flow)
+        # A replaced pod comes back on a new address, so the fixture's client can
+        # no longer reach NiFi and the reading after the restart needs its own.
+        restarted_client = NifiClient(nifi_base_url(juju, nifi_app))
+        restarted_client.wait_until_ready()
+        after = _record(restarted_client, juju, kube, unit, pod, flow)
 
         yield before, after
     finally:
         # Rebuilt rather than reused: the address has changed if the restart ran.
+        # Each step independently, so one failure neither hides the test's own
+        # failure nor stops the group being taken off the canvas.
         cleanup = NifiClient(nifi_base_url(juju, nifi_app))
-        cleanup.schedule_process_group(group.id, False)
-        nipyapi.canvas.purge_process_group(group, stop=True)
-        cleanup.delete_process_group(nipyapi.canvas.get_process_group(group.id, "id"))
+        best_effort(
+            "stopping the process group", lambda: cleanup.schedule_process_group(group.id, False)
+        )
+        best_effort(
+            "purging the queues", lambda: nipyapi.canvas.purge_process_group(group, stop=True)
+        )
+        best_effort(
+            "deleting the process group",
+            lambda: cleanup.delete_process_group(nipyapi.canvas.get_process_group(group.id, "id")),
+        )
 
 
 def test_pod_was_replaced(restarted: tuple[State, State]):
@@ -201,7 +210,10 @@ def test_provenance_survived(restarted: tuple[State, State]):
     before, after = restarted
     assert before.provenance_event_ids, "no provenance events were recorded before the restart"
     missing = set(before.provenance_event_ids) - set(after.provenance_event_ids)
-    assert not missing, f"provenance events lost: {sorted(missing)}"
+    assert not missing, (
+        f"provenance events lost: {sorted(missing)}; "
+        f"the query returned {after.provenance_event_ids}"
+    )
 
 
 def test_sensitive_props_key_unchanged(restarted: tuple[State, State]):
