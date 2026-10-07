@@ -24,10 +24,6 @@ DEFAULT_TIMEOUT = 300
 # then polled until they report finished.
 REQUEST_TIMEOUT = 60
 
-# Seconds Kubernetes allows NiFi to shut down before killing it. Well above the
-# second or so a clean shutdown takes, since an incomplete one loses provenance.
-SHUTDOWN_GRACE = 120
-
 WORKLOAD_CONTAINER = "nifi"
 NIFI_PROPERTIES = "/opt/nifi/conf/nifi.properties"
 
@@ -358,28 +354,19 @@ def pod_uid(kube: Client, pod: str) -> str:
     return kube.get(Pod, name=pod).metadata.uid
 
 
-def replace_pod(
-    kube: Client,
-    pod: str,
-    timeout: int = DEFAULT_TIMEOUT,
-    grace_period: int = SHUTDOWN_GRACE,
-) -> str:
+def replace_pod(kube: Client, pod: str, timeout: int = DEFAULT_TIMEOUT) -> str:
     """Delete a pod and wait for a ready replacement, returning its new UID.
 
     The pod is deleted rather than the workload restarted: only a replaced pod
     re-attaches the volumes, which is what the persistence checks are about.
-
-    *grace_period* is given explicitly, and generously, because NiFi commits its
-    provenance index when it shuts down cleanly. Killed before it finishes, the
-    index is lost and the events it held stop being queryable even though the
-    journal is still on the volume -- so a hurried deletion would test how NiFi
-    copes with being killed rather than whether the volumes carry its state.
+    Deleted on the cluster's own terms, with no grace period of its own, so this
+    is the replacement an upgrade or a node drain would perform.
 
     Raises:
         TimeoutError: if no ready replacement appears within *timeout*.
     """
     previous = pod_uid(kube, pod)
-    kube.delete(Pod, name=pod, grace_period=grace_period)
+    kube.delete(Pod, name=pod)
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
