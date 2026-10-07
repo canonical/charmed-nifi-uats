@@ -123,6 +123,80 @@ class NifiClient:
         except ApiException as e:
             raise NifiClientError(f"Failed to create process group {name!r}: {e}") from e
 
+    def create_processor(
+        self, process_group, processor_type: str, name: str, config=None, position=(0, 0)
+    ):
+        """Add a processor of *processor_type*, e.g. "GenerateFlowFile", to a process group."""
+        self._activate()
+        try:
+            return nipyapi.canvas.create_processor(
+                process_group,
+                nipyapi.canvas.get_processor_type(processor_type),
+                position,
+                name,
+                config,
+            )
+        except ApiException as e:
+            raise NifiClientError(f"Failed to create processor {name!r}: {e}") from e
+
+    def connect(self, source, target, relationships: list[str]):
+        """Connect two components for the given relationships."""
+        self._activate()
+        try:
+            return nipyapi.canvas.create_connection(source, target, relationships)
+        except ApiException as e:
+            raise NifiClientError(f"Failed to connect {source.id} to {target.id}: {e}") from e
+
+    def schedule_process_group(self, pg_id: str, scheduled: bool) -> None:
+        """Start or stop every component in a process group."""
+        self._activate()
+        nipyapi.canvas.schedule_process_group(pg_id, scheduled)
+
+    def schedule_processor(self, processor, scheduled: bool) -> None:
+        """Start or stop a single processor."""
+        self._activate()
+        nipyapi.canvas.schedule_processor(processor, scheduled)
+
+    def process_group_status(self, pg_id: str):
+        """The aggregate status snapshot for a process group, with per-component counters."""
+        self._activate()
+        try:
+            return (
+                nipyapi.nifi.FlowApi()
+                .get_process_group_status(pg_id)
+                .process_group_status.aggregate_snapshot
+            )
+        except ApiException as e:
+            raise NifiClientError(f"Failed to read status of process group {pg_id}: {e}") from e
+
+    def latest_provenance_events(self, component_id: str) -> list:
+        """The most recent provenance events a component recorded.
+
+        Enough for the checks here, and far cheaper than the submit, poll and
+        delete cycle a full provenance query needs.
+        """
+        self._activate()
+        try:
+            result = nipyapi.nifi.ProvenanceEventsApi().get_latest_provenance_events(component_id)
+            return result.latest_provenance_events.provenance_events or []
+        except ApiException as e:
+            raise NifiClientError(f"Failed to read provenance for {component_id}: {e}") from e
+
+    def provenance_event(self, event_id):
+        """One provenance event in full, including the FlowFile's attributes."""
+        self._activate()
+        try:
+            return (
+                nipyapi.nifi.ProvenanceEventsApi().get_provenance_event(event_id).provenance_event
+            )
+        except ApiException as e:
+            raise NifiClientError(f"Failed to read provenance event {event_id}: {e}") from e
+
+    def bulletins(self, pg_id: str) -> list:
+        """Bulletins raised by a process group and its children."""
+        self._activate()
+        return nipyapi.canvas.get_bulletin_board(pg_id=pg_id)
+
     def list_process_group_names(self) -> list[str]:
         """Names of every process group below the root."""
         self._activate()
@@ -140,6 +214,20 @@ class NifiClient:
         except ApiException as e:
             name = process_group.component.name if process_group.component else "?"
             raise NifiClientError(f"Failed to delete process group {name!r}: {e}") from e
+
+
+def best_effort(description: str, action) -> None:
+    """Run a teardown step, logging rather than raising when it fails.
+
+    A teardown that raises takes over as the reported failure, pushing the one
+    the test found into a chained traceback, and stops the steps after it from
+    running at all -- which is how a stopped-but-undeleted process group would
+    be left on the canvas.
+    """
+    try:
+        action()
+    except Exception as e:  # noqa: BLE001 - cleanup must not mask a test failure
+        logger.warning("Cleanup step failed, %s: %s", description, e)
 
 
 def unique_name(prefix: str) -> str:
