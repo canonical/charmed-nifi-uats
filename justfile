@@ -91,8 +91,10 @@ destroy model_name=MODEL_DEFAULT:
     fi
     just destroy-model ${model_name}
 
-# Print the NiFi and Traefik application names from the Terraform outputs,
-# space-separated. The Traefik name is empty when ingress is not enabled.
+# Print the application names from the Terraform outputs, one per line, in the
+# order NiFi, Traefik, git-integrator. The optional ones are blank lines when
+# they are not deployed; one per line rather than space-separated, so a missing
+# Traefik cannot be mistaken for a missing git-integrator.
 [private]
 app-names:
     #!/usr/bin/bash
@@ -100,16 +102,17 @@ app-names:
 
     outputs=$(terraform -chdir=terraform output -json)
     nifi_app=$(jq -er '.nifi_app_name.value' <<< "${outputs}")
-    # A null output is left out of state, so a disabled Traefik has no key here.
+    # A null output is left out of state, so a disabled application has no key.
     traefik_app=$(jq -r '.traefik_app_name.value // empty' <<< "${outputs}")
+    git_app=$(jq -r '.git_app_name.value // empty' <<< "${outputs}")
 
-    echo "${nifi_app} ${traefik_app}"
+    printf '%s\n%s\n%s\n' "${nifi_app}" "${traefik_app}" "${git_app}"
 
 # Check the deployment is up before a suite runs, so that a failure inside the
 # suite is a real failure rather than an under-deployed model.
 [private]
-preflight model_name nifi_app traefik_app="":
-    MODEL="${model_name}" NIFI_APP="${nifi_app}" TRAEFIK_APP="${traefik_app}" \
+preflight model_name nifi_app traefik_app="" git_app="":
+    MODEL="${model_name}" NIFI_APP="${nifi_app}" TRAEFIK_APP="${traefik_app}" GIT_APP="${git_app}" \
         goss --gossfile tests/goss/goss.yaml validate --retry-timeout 900s --sleep 15s --color
 
 # Run one UAT suite by tox env name, after the pre-flight check
@@ -122,15 +125,20 @@ uats-suite suite model_name=MODEL_DEFAULT:
     trap 'rc=$?; if [ ${rc} -ne 0 ]; then just collect-artifacts ${model_name}; fi; exit ${rc}' EXIT
 
     # Captured into a variable before splitting: a failed command substitution
-    # inside `read <<<` does not trip `set -e`, so the suite would otherwise run,
-    # and pass, against empty application names.
+    # inside `mapfile <<<` does not trip `set -e`, so the suite would otherwise
+    # run, and pass, against empty application names.
     names=$(just app-names)
-    read -r nifi_app traefik_app <<< "${names}"
+    mapfile -t apps <<< "${names}"
+    nifi_app="${apps[0]}"
+    # Defaulted, because $() drops the trailing newlines of absent applications.
+    traefik_app="${apps[1]:-}"
+    git_app="${apps[2]:-}"
 
-    just preflight ${model_name} ${nifi_app} "${traefik_app}"
+    just preflight ${model_name} ${nifi_app} "${traefik_app}" "${git_app}"
 
     uv tool run --python 3.12 tox -e ${suite} -- --model=${model_name} \
-        --nifi-app=${nifi_app} ${traefik_app:+--traefik-app=${traefik_app}}
+        --nifi-app=${nifi_app} ${traefik_app:+--traefik-app=${traefik_app}} \
+        ${git_app:+--git-app=${git_app}}
 
 # Run the framework's own tests, proving the fixtures attach to a deployment
 test-framework model_name=MODEL_DEFAULT: (uats-suite "framework" model_name)
@@ -147,6 +155,9 @@ uats-ingress model_name=MODEL_DEFAULT: (uats-suite "ingress" model_name)
 # Run the flow UATs
 uats-flow model_name=MODEL_DEFAULT: (uats-suite "flow" model_name)
 
+# Run the git registry UATs
+uats-git-registry model_name=MODEL_DEFAULT: (uats-suite "git-registry" model_name)
+
 # Run every UAT suite against one deployment
 uats model_name=MODEL_DEFAULT:
     just test-framework ${model_name}
@@ -154,6 +165,7 @@ uats model_name=MODEL_DEFAULT:
     just uats-persistence ${model_name}
     just uats-ingress ${model_name}
     just uats-flow ${model_name}
+    just uats-git-registry ${model_name}
 
 # Lint python code
 lint:
