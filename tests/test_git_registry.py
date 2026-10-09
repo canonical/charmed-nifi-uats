@@ -168,9 +168,12 @@ def test_registry_client_points_at_the_configured_repository(
     Read back from git-integrator's own configuration rather than hard-coded, so
     this compares what NiFi was told with what it did.
     """
+    client = relation_cycle.rerelated.registry_client
+    assert client is not None, f"{REGISTRY_CLIENT_NAME!r} was not created"
+
     config = juju.config(git_app)
     owner, repo = _owner_and_repo(str(config["repository_url"]))
-    properties = relation_cycle.rerelated.registry_client.properties
+    properties = client.properties
 
     assert properties["Repository Owner"] == owner
     assert properties["Repository Name"] == repo

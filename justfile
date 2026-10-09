@@ -26,9 +26,10 @@ destroy-model model_name:
 add-model model_name: (destroy-model model_name)
     juju add-model ${model_name}
 
-# Write the tfvars file: model UUID, channel, revision and a fresh sensitive properties key.
+# Write the tfvars file: model UUID, channel, revision, a fresh sensitive properties
+# key, and whether to deploy git-integrator.
 [private]
-write-tfvars model_name channel revision="":
+write-tfvars model_name channel revision="" git_integrator="false":
     #!/usr/bin/bash
     set -euo pipefail
 
@@ -47,6 +48,14 @@ write-tfvars model_name channel revision="":
     if [ -n "${revision}" ]; then
         echo "revision = ${revision}" >> "terraform/${TFVARS}"
     fi
+
+    # Rejected rather than ignored when it is neither: a typo silently deploying
+    # no git-integrator would make the git-registry suite skip instead of fail.
+    case "${git_integrator}" in
+        true) echo 'git_integrator = { enabled = true }' >> "terraform/${TFVARS}" ;;
+        false) ;;
+        *) echo "git_integrator must be 'true' or 'false', got '${git_integrator}'" >&2; exit 1 ;;
+    esac
 
 # Wait until every application in the model is active.
 wait-for-active model_name=MODEL_DEFAULT:
@@ -70,11 +79,13 @@ wait-for-active model_name=MODEL_DEFAULT:
     exit 1
 
 # Deploy Charmed NiFi for the UATs, from a given channel and optional revision.
-deploy model_name=MODEL_DEFAULT channel="2.10/edge" revision="": (add-model model_name) (initialize)
+# Pass git_integrator=true to deploy git-integrator too, which the git-registry
+# suite needs and the others do not.
+deploy model_name=MODEL_DEFAULT channel="2.10/edge" revision="" git_integrator="false": (add-model model_name) (initialize)
     #!/usr/bin/bash
     set -euxo pipefail
 
-    just write-tfvars ${model_name} ${channel} "${revision}"
+    just write-tfvars ${model_name} ${channel} "${revision}" "${git_integrator}"
     terraform -chdir=terraform apply -auto-approve -var-file="${TFVARS}"
     just wait-for-active ${model_name}
 
