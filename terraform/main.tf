@@ -18,4 +18,13 @@ module "charmed_nifi" {
     enabled = var.traefik.enabled
     channel = var.traefik.channel
   }
+
+  git_integrator = {
+    enabled = var.git_integrator.enabled
+    channel = var.git_integrator.channel
+    config = {
+      repository_url = var.git_integrator.repository_url
+      tracking_ref   = var.git_integrator.tracking_ref
+    }
+  }
 }

@@ -77,6 +77,7 @@ jobs:
           - persistence
           - ingress
           - flow
+          - git-registry
       fail-fast: false
     concurrency:
       group: ${{ github.workflow }}-${{ github.ref }}-${{ matrix.suite }}
@@ -105,7 +106,11 @@ jobs:
           sudo chmod +rx /usr/local/bin/goss
 
       - name: Deploy Charmed NiFi
-        run: just deploy "${MODEL}" "${{ inputs.channel || '2.10/edge' }}" "${{ inputs.revision || '' }}"
+        # git-integrator is deployed only for the suite that relates to it.
+        run: >-
+          just deploy "${MODEL}" "${{ inputs.channel || '2.10/edge' }}"
+          "${{ inputs.revision || '' }}"
+          "${{ matrix.suite == 'git-registry' }}"
 
       - name: Run the ${{ matrix.suite }} suite
         run: just uats-suite "${{ matrix.suite }}" "${MODEL}"
