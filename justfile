@@ -138,6 +138,9 @@ test-framework model_name=MODEL_DEFAULT: (uats-suite "framework" model_name)
 # Run the deployment UATs
 uats-deployment model_name=MODEL_DEFAULT: (uats-suite "deployment" model_name)
 
+# Run the persistence UATs
+uats-persistence model_name=MODEL_DEFAULT: (uats-suite "persistence" model_name)
+
 # Run the ingress UATs
 uats-ingress model_name=MODEL_DEFAULT: (uats-suite "ingress" model_name)
 
@@ -148,6 +151,7 @@ uats-flow model_name=MODEL_DEFAULT: (uats-suite "flow" model_name)
 uats model_name=MODEL_DEFAULT:
     just test-framework ${model_name}
     just uats-deployment ${model_name}
+    just uats-persistence ${model_name}
     just uats-ingress ${model_name}
     just uats-flow ${model_name}
 
@@ -175,16 +179,50 @@ collect-artifacts model_name=MODEL_DEFAULT out_dir="artifacts":
 
     mkdir -p "${out_dir}"
 
-    juju status --model ${model_name} --relations --storage > "${out_dir}/juju-status.txt" 2>&1
-    juju debug-log --model ${model_name} --replay --no-tail > "${out_dir}/juju-debug-log.txt" 2>&1
+    # Every command goes through a pipe rather than redirecting straight to a
+    # file. juju, kubectl, terraform and k8s are snaps, and a confined snap
+    # cannot write to a descriptor it did not open itself: redirected to a file
+    # they produce an empty one and report success, which is how a failed run
+    # ended up with nothing to debug. Writing through `cat` is unconfined.
+    capture() {
+        local file="$1"
+        shift
+        "$@" 2>&1 | cat > "${file}"
+    }
+
+    capture "${out_dir}/juju-status.txt" \
+        juju status --model "${model_name}" --relations --storage
+    capture "${out_dir}/juju-debug-log.txt" \
+        juju debug-log --model "${model_name}" --replay --no-tail
 
     # Every pod in the model, so this stays correct as applications are added.
-    kubectl describe pods -n ${model_name} > "${out_dir}/kubectl-describe-pods.txt" 2>&1
-    kubectl logs -n ${model_name} --all-containers --ignore-errors \
-        --prefix --tail=2000 -l 'app.kubernetes.io/name' > "${out_dir}/pod-logs.txt" 2>&1
+    capture "${out_dir}/kubectl-describe-pods.txt" kubectl describe pods -n "${model_name}"
+    capture "${out_dir}/pod-logs.txt" \
+        kubectl logs -n "${model_name}" --all-containers --ignore-errors \
+        --prefix --tail=2000 -l 'app.kubernetes.io/name'
 
-    sudo k8s inspect --output-dir "${out_dir}" > "${out_dir}/k8s-inspect.txt" 2>&1
-    terraform -chdir=terraform state list > "${out_dir}/terraform-state.txt" 2>&1
-    df -h > "${out_dir}/disk.txt" 2>&1
+    capture "${out_dir}/k8s-inspect.txt" sudo k8s inspect --output-dir "${out_dir}"
+    capture "${out_dir}/terraform-state.txt" terraform -chdir=terraform state list
+    capture "${out_dir}/disk.txt" df -h
 
+    # Report what each command actually produced.
+    # Named without .txt so the glob below does not list the manifest itself.
+    manifest="${out_dir}/MANIFEST"
+    : > "${manifest}"
+    empty=0
+    for file in "${out_dir}"/*.txt; do
+        bytes=$(wc -c < "${file}")
+        if [ "${bytes}" -eq 0 ]; then
+            # Counted here rather than in a pipeline: `for ... done | tee` runs the
+            # loop in a subshell, which would discard the count.
+            empty=$((empty + 1))
+            printf 'EMPTY   %s\n' "${file}" | tee -a "${manifest}"
+        else
+            printf '%7s %s\n' "${bytes}" "${file}" | tee -a "${manifest}"
+        fi
+    done
+
+    if [ "${empty}" -ne 0 ]; then
+        echo "WARNING: ${empty} artifact file(s) are empty; the commands that write them produced no output" >&2
+    fi
     echo "Artifacts written to ${out_dir}/"

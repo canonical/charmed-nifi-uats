@@ -14,6 +14,7 @@ import time
 
 import jubilant
 import pytest
+from lightkube import Client
 
 from tests.helpers import NifiClient, nifi_base_url, proxied_url, unique_name
 
@@ -88,6 +89,19 @@ def nifi_client(juju: jubilant.Juju, nifi_app: str, deployment_ready) -> NifiCli
     client = NifiClient(nifi_base_url(juju, nifi_app))
     client.wait_until_ready()
     return client
+
+
+@pytest.fixture(scope="session")
+def kube(juju: jubilant.Juju) -> Client:
+    """A Kubernetes client for the namespace backing the model.
+
+    Juju names the namespace after the model, so the workload pods of the
+    deployment under test are the ones this client sees. The cluster
+    configuration comes from the environment, as the CI job writes it to
+    ~/.kube/config before the suites run.
+    """
+    assert juju.model, "No model on the jubilant client: pass --model"
+    return Client(namespace=juju.model)
 
 
 @pytest.fixture(scope="session")
