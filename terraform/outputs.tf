@@ -10,3 +10,8 @@ output "traefik_app_name" {
   description = "Name of the deployed Traefik application (null when not enabled)."
   value       = var.traefik.enabled ? module.charmed_nifi.traefik.name : null
 }
+
+output "git_app_name" {
+  description = "Name of the deployed git-integrator application (null when not enabled)."
+  value       = var.git_integrator.enabled ? module.charmed_nifi.git_integrator.name : null
+}

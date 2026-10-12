@@ -311,6 +311,15 @@ class NifiClient:
         self._activate()
         return nipyapi.canvas.get_process_group(pg_id, "id") is not None
 
+    def registry_clients(self) -> list:
+        """The flow registry clients NiFi has configured."""
+        self._activate()
+        try:
+            result = nipyapi.nifi.ControllerApi().get_flow_registry_clients()
+        except ApiException as e:
+            raise NifiClientError(f"Failed to list flow registry clients: {e}") from e
+        return (result.registries or []) if result else []
+
     def list_process_group_names(self) -> list[str]:
         """Names of every process group below the root."""
         self._activate()

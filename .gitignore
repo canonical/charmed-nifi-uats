@@ -1,6 +1,7 @@
 # Terraform
 terraform/.terraform/
 terraform/.terraform.lock.hcl
+# The generated variables file. Per-suite ones in terraform/test/ are checked in.
 terraform/*.tfvars
 *.tfstate
 *.tfstate.*

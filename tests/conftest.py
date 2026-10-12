@@ -43,6 +43,13 @@ def pytest_addoption(parser):
         help="Name of the Traefik application. Omit when ingress is not enabled; "
         "ingress tests are then skipped",
     )
+    parser.addoption(
+        "--git-app",
+        action="store",
+        default=None,
+        help="Name of the git-integrator application. Omit when it is not deployed; "
+        "git registry tests are then skipped",
+    )
 
 
 @pytest.fixture(scope="session")
@@ -53,6 +60,11 @@ def nifi_app(request: pytest.FixtureRequest) -> str:
 @pytest.fixture(scope="session")
 def traefik_app(request: pytest.FixtureRequest) -> str | None:
     return request.config.getoption("--traefik-app")
+
+
+@pytest.fixture(scope="session")
+def git_app(request: pytest.FixtureRequest) -> str | None:
+    return request.config.getoption("--git-app")
 
 
 @pytest.fixture(scope="session")

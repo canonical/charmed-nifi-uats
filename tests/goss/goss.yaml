@@ -1,8 +1,9 @@
 # Pre-flight checks, run before a UAT suite so that a failure inside the suite is
 # a real failure rather than an under-deployed model.
 #
-# MODEL, NIFI_APP and TRAEFIK_APP are exported by the `preflight` just recipe.
-# TRAEFIK_APP is empty when ingress is not enabled, and its check is skipped.
+# MODEL, NIFI_APP, TRAEFIK_APP and GIT_APP are exported by the `preflight` just
+# recipe. The optional ones are empty when not deployed, and their checks are
+# then skipped.
 command:
   nifi-active:
     exec: >-
@@ -15,6 +16,14 @@ command:
     exec: >-
       juju wait-for application --model "{{ .Env.MODEL }}" "{{ .Env.TRAEFIK_APP }}"
       --query='name == "{{ .Env.TRAEFIK_APP }}" && status == "active"' --timeout=10m
+    exit-status: 0
+    timeout: 660000
+{{ end }}
+{{ if .Env.GIT_APP }}
+  git-integrator-active:
+    exec: >-
+      juju wait-for application --model "{{ .Env.MODEL }}" "{{ .Env.GIT_APP }}"
+      --query='name == "{{ .Env.GIT_APP }}" && status == "active"' --timeout=10m
     exit-status: 0
     timeout: 660000
 {{ end }}
