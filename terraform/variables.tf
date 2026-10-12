@@ -30,7 +30,7 @@ variable "sensitive_props_key" {
 }
 
 variable "git_integrator" {
-  description = "Git repository provider for NiFi's flow registry client. Off by default: only the git-registry suite needs it, and deploying it for every suite would make the pre-flight check wait on it. Enable it with `just deploy <model> <channel> <revision> true`. The repository only needs to be readable, so a public one needs no token and the charm configures the client with no authentication."
+  description = "Git repository provider for NiFi's flow registry client. Off by default: only the git-registry suite needs it, and deploying it for every suite would make the pre-flight check wait on it. That suite turns it on through terraform/test/git-registry.tfvars. The repository only needs to be readable, so a public one needs no token and the charm configures the client with no authentication."
   type = object({
     enabled        = optional(bool, false)
     channel        = optional(string, "1.0/edge")

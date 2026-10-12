@@ -26,10 +26,10 @@ destroy-model model_name:
 add-model model_name: (destroy-model model_name)
     juju add-model ${model_name}
 
-# Write the tfvars file: model UUID, channel, revision, a fresh sensitive properties
-# key, and whether to deploy git-integrator.
+# Write the tfvars file: model UUID, channel, revision and a fresh sensitive
+# properties key. Per-suite variables live in terraform/test/<suite>.tfvars.
 [private]
-write-tfvars model_name channel revision="" git_integrator="false":
+write-tfvars model_name channel revision="":
     #!/usr/bin/bash
     set -euo pipefail
 
@@ -48,14 +48,6 @@ write-tfvars model_name channel revision="" git_integrator="false":
     if [ -n "${revision}" ]; then
         echo "revision = ${revision}" >> "terraform/${TFVARS}"
     fi
-
-    # Rejected rather than ignored when it is neither: a typo silently deploying
-    # no git-integrator would make the git-registry suite skip instead of fail.
-    case "${git_integrator}" in
-        true) echo 'git_integrator = { enabled = true }' >> "terraform/${TFVARS}" ;;
-        false) ;;
-        *) echo "git_integrator must be 'true' or 'false', got '${git_integrator}'" >&2; exit 1 ;;
-    esac
 
 # Wait until every application in the model is active.
 wait-for-active model_name=MODEL_DEFAULT:
@@ -79,14 +71,23 @@ wait-for-active model_name=MODEL_DEFAULT:
     exit 1
 
 # Deploy Charmed NiFi for the UATs, from a given channel and optional revision.
-# Pass git_integrator=true to deploy git-integrator too, which the git-registry
-# suite needs and the others do not.
-deploy model_name=MODEL_DEFAULT channel="2.10/edge" revision="" git_integrator="false": (add-model model_name) (initialize)
+# Naming a suite also applies terraform/test/<suite>.tfvars, which is how a suite
+# asks for applications the others do not need.
+deploy model_name=MODEL_DEFAULT channel="2.10/edge" revision="" suite="": (add-model model_name) (initialize)
     #!/usr/bin/bash
     set -euxo pipefail
 
-    just write-tfvars ${model_name} ${channel} "${revision}" "${git_integrator}"
-    terraform -chdir=terraform apply -auto-approve -var-file="${TFVARS}"
+    just write-tfvars ${model_name} ${channel} "${revision}"
+
+    # Paths are relative to the -chdir directory, and a later -var-file wins, so
+    # a suite's variables override the generated ones.
+    var_files=(-var-file="${TFVARS}")
+    if [ -n "${suite}" ] && [ -f "terraform/test/${suite}.tfvars" ]; then
+        echo "Applying scenario variables from test/${suite}.tfvars"
+        var_files+=(-var-file="test/${suite}.tfvars")
+    fi
+
+    terraform -chdir=terraform apply -auto-approve "${var_files[@]}"
     just wait-for-active ${model_name}
 
     echo "Charmed NiFi deployed in model ${model_name}."
