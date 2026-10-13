@@ -1,0 +1,148 @@
+# Copyright 2026 Canonical Ltd.
+# See LICENSE file for licensing details.
+
+name: UATs
+
+on:
+  push:
+      branches:
+        - add-juju-4-uats
+      paths-ignore:
+        - '**.md'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+  schedule:
+    # Nightly against the channel head, offset from the top of the hour.
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Charmhub channel to test against"
+        required: true
+        default: "2.10/edge"
+        type: choice
+        options:
+          - 2.10/edge
+          - 2.10/beta
+          - 2.10/candidate
+          - 2.10/stable
+      revision:
+        description: "Charm revision to pin (optional, defaults to the channel head)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  MODEL: nifi-uats
+
+jobs:
+  uats:
+    name: UATs (${{ matrix.suite }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    strategy:
+      matrix:
+        # One entry per tox environment. Scenario suites are added by their own tickets.
+        suite:
+          - framework
+          - deployment
+          - persistence
+          - ingress
+          - flow
+          - git-registry
+      fail-fast: false
+
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-${{ matrix.suite }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up operator environment
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sudo snap install concierge --classic
+
+          # The k8s preset enables the load balancer Traefik needs and 
+          # installs jq. only the snaps this repo adds are listed here.
+          sudo -E concierge prepare \
+            -p k8s \
+            --juju-channel=4/edge \
+            --extra-snaps=astral-uv,just,terraform
+
+          mkdir -p ~/.kube
+          sudo k8s kubectl config view --raw > ~/.kube/config
+
+          # FIXME: install from a snap once goss publishes one.
+          GOSS_VERSION="v0.4.10"
+          goss_base_url="https://github.com/goss-org/goss/releases/download/${GOSS_VERSION}"
+          curl -fL "${goss_base_url}/goss_${GOSS_VERSION#v}_linux_x86_64.tar.gz" \
+            | sudo tar xz -C /usr/local/bin goss
+          sudo chmod +rx /usr/local/bin/goss
+
+      - name: Verify Juju 4.x installation
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Juju executable: $(command -v juju)"
+          JUJU_VERSION="$(juju version)"
+          echo "Installed Juju version: ${JUJU_VERSION}"
+
+          # Fail immediately if Concierge did not install Juju 4.x.
+          if [[ ! "${JUJU_VERSION}" =~ ^4\. ]]; then
+            echo "::error::Expected Juju 4.x, but found Juju ${JUJU_VERSION}"
+            exit 1
+          fi
+
+          # Also check which Juju snap channel is installed.
+          JUJU_SNAP_INFO="$(snap list juju)"
+          echo "${JUJU_SNAP_INFO}"
+
+          JUJU_TRACKING="$(awk 'NR == 2 {print $4}' <<< "${JUJU_SNAP_INFO}")"
+          echo "Juju snap tracking channel: ${JUJU_TRACKING}"
+
+          if [[ "${JUJU_TRACKING}" != "4/edge" ]]; then
+            echo "::error::Expected Juju snap channel 4/edge, but found ${JUJU_TRACKING}"
+            exit 1
+          fi
+
+          {
+            echo "### Juju version verification"
+            echo "- **Suite:** ${{ matrix.suite }}"
+            echo "- **Juju version:** ${JUJU_VERSION}"
+            echo "- **Juju snap channel:** ${JUJU_TRACKING}"
+            echo "- **Verification:** Passed"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          echo "Juju 4.x verification passed."
+
+      - name: Deploy Charmed NiFi
+        # The suite name applies terraform/test/<suite>.tfvars when it exists,
+        # so a suite gets the applications it needs and no others.
+        run: >-
+          just deploy "${MODEL}" "${{ inputs.channel || '2.10/edge' }}"
+          "${{ inputs.revision || '' }}" "${{ matrix.suite }}"
+
+      - name: Run the ${{ matrix.suite }} suite
+        run: just uats-suite "${{ matrix.suite }}" "${MODEL}"
+
+      - name: Collect artifacts
+        if: failure()
+        # Avoid collecting twice: a second collection can truncate existing artifacts.
+        run: '[ -d artifacts ] || just collect-artifacts "${MODEL}" artifacts'
+
+      - name: Upload artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.suite }}-artifacts
+          path: artifacts/
+          retention-days: 7
