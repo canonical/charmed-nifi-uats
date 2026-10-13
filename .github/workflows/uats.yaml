@@ -115,6 +115,14 @@ jobs:
       - name: Run the ${{ matrix.suite }} suite
         run: just uats-suite "${{ matrix.suite }}" "${MODEL}"
 
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.suite }}-report
+          path: report-*.xml
+          retention-days: 7
+
       - name: Collect artifacts
         if: failure()
         # Only when the suite's own failure trap has not already collected:

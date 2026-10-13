@@ -16,6 +16,7 @@ build/
 
 # UAT run output
 artifacts/
+report-*.xml
 
 # Tooling caches
 .pytest_cache/
