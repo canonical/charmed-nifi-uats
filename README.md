@@ -16,7 +16,7 @@ channel, and you can run them against your own deployment to see if it is health
 
 | Suite | Checks |
 |---|---|
-| `framework` | The fixtures can reach the deployment. Start here if something looks wrong — if this fails, everything else will. |
+| `framework` | The fixtures can reach the deployment. Start here if something looks wrong. If this fails, everything else will. |
 | `deployment` | Applications are active, storage is mounted, the NiFi version is right, and it is the Canonical rock. |
 | `persistence` | Flows, queued FlowFiles and their content survive the pod being replaced. |
 | `ingress` | The UI and the REST API work through Traefik. |
@@ -26,8 +26,8 @@ channel, and you can run them against your own deployment to see if it is health
 ## Before you start
 
 You need a Kubernetes cluster with a load balancer, a Juju controller on it, and
-these tools: `juju`, `kubectl`, `terraform`, `just`, `astral-uv` and
-[`goss`](https://github.com/goss-org/goss).
+these tools: `juju`, `kubectl`, `terraform`, `just`, `uv` (the `astral-uv` snap)
+and [`goss`](https://github.com/goss-org/goss).
 
 [`concierge`](https://github.com/canonical/concierge) sets all of that up, and its
 `k8s` preset includes the load balancer Traefik needs:
@@ -59,7 +59,7 @@ just uats-persistence
 To use a different model, channel or revision, pass them in:
 
 ```bash
-just deploy my-model 2.10/beta 12
+just deploy my-model 2.10/edge 12
 just uats-flow my-model
 just destroy my-model
 ```
@@ -72,15 +72,9 @@ just deploy my-model 2.10/edge "" git-registry
 just uats-git-registry my-model
 ```
 
-Only `git-registry` needs this today — it is the one suite that relates to
+Only `git-registry` needs this today: it is the one suite that relates to
 `git-integrator`. Deploy without naming it and `just uats` runs the other suites
 and skips `git-registry`.
-
-### In CI
-
-The `UATs` workflow runs on every pull request and nightly. To test a specific
-channel, go to **Actions → UATs → Run workflow** and pick one — that is how we
-check a promotion candidate.
 
 ### Against your own deployment
 
@@ -103,8 +97,8 @@ uv tool run --python 3.12 tox -e deployment -- --model my-model
 | `XFAIL` | A known bug, with the reason printed next to it. Not a failure. |
 | `SKIPPED` | The check does not apply here. The reason says why. |
 
-A suite only exits non-zero if something `FAILED`, so `5 passed, 1 xfailed` is a
-green run.
+A suite only exits non-zero if something `FAILED` or errored, so
+`5 passed, 1 xfailed` is a green run.
 
 **One test is expected to fail.** `test_provenance_survived` is marked `XFAIL`
 because the charm leaves NiFi on its in-memory provenance repository, so
@@ -113,8 +107,7 @@ start passing and the suite will go red to tell you to remove the marker.
 
 **Skips are normal.** `ingress` skips without `--traefik-app`, and `git-registry`
 skips without `--git-app`. If a whole suite skips when you did not expect it to,
-that application is not deployed — check `terraform output`, and see the
-`git-integrator` note above.
+that application is not deployed: check `terraform output`, and see the `git-integrator` note above.
 
 ## When something fails
 
@@ -143,9 +136,7 @@ You can collect the same files any time with `just collect-artifacts my-model`.
 ## Working on the tests
 
 ```bash
-just lint        # the same checks CI runs
-just format      # fixes most of what lint reports
-just validate    # checks the terraform
+just lint       
+just format      
+just validate    
 ```
-
-The scenarios come from WF032, *Charmed NiFi UATs*.
