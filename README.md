@@ -64,15 +64,17 @@ just uats-flow my-model
 just destroy my-model
 ```
 
-The `git-registry` suite needs `git-integrator`, which is not deployed by default
-because no other suite uses it. Add `true` to deploy it:
+Some suites need applications the others do not. Name the suite when you deploy
+and it gets them, from `terraform/test/<suite>.tfvars`:
 
 ```bash
-just deploy my-model 2.10/edge "" true
+just deploy my-model 2.10/edge "" git-registry
 just uats-git-registry my-model
 ```
 
-Without it, `just uats` runs the other suites and skips `git-registry`.
+Only `git-registry` needs this today — it is the one suite that relates to
+`git-integrator`. Deploy without naming it and `just uats` runs the other suites
+and skips `git-registry`.
 
 ### In CI
 
