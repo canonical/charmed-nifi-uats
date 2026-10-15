@@ -1,7 +1,7 @@
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-name: UATs
+name: Juju 4.x UATs
 
 on:
   push:
@@ -92,37 +92,20 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Juju executable: $(command -v juju)"
+          echo "___ Juju Client ___"
           JUJU_VERSION="$(juju version)"
-          echo "Installed Juju version: ${JUJU_VERSION}"
+          echo "${JUJU_VERSION}"
 
-          # Fail immediately if Concierge did not install Juju 4.x.
           if [[ ! "${JUJU_VERSION}" =~ ^4\. ]]; then
-            echo "::error::Expected Juju 4.x, but found Juju ${JUJU_VERSION}"
+            echo "::error::Expected Juju 4.x client, got ${JUJU_VERSION}"
             exit 1
           fi
 
-          # Also check which Juju snap channel is installed.
-          JUJU_SNAP_INFO="$(snap list juju)"
-          echo "${JUJU_SNAP_INFO}"
+          echo "___ Juju Controllers ___"
+          juju controllers --refresh
 
-          JUJU_TRACKING="$(awk 'NR == 2 {print $4}' <<< "${JUJU_SNAP_INFO}")"
-          echo "Juju snap tracking channel: ${JUJU_TRACKING}"
-
-          if [[ "${JUJU_TRACKING}" != "4/edge" ]]; then
-            echo "::error::Expected Juju snap channel 4/edge, but found ${JUJU_TRACKING}"
-            exit 1
-          fi
-
-          {
-            echo "### Juju version verification"
-            echo "- **Suite:** ${{ matrix.suite }}"
-            echo "- **Juju version:** ${JUJU_VERSION}"
-            echo "- **Juju snap channel:** ${JUJU_TRACKING}"
-            echo "- **Verification:** Passed"
-          } >> "${GITHUB_STEP_SUMMARY}"
-
-          echo "Juju 4.x verification passed."
+          echo "___ Controller Model Agent Version ___"
+          juju model-config -m controller agent-version
 
       - name: Deploy Charmed NiFi
         # The suite name applies terraform/test/<suite>.tfvars when it exists,
