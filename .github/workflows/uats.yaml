@@ -93,7 +93,7 @@ jobs:
           sudo snap install concierge --classic
           # The k8s preset already enables the load balancer Traefik needs, and
           # installs jq; only the snaps this repo adds are listed here.
-          sudo -E concierge prepare -p k8s --extra-snaps=astral-uv,just,terraform
+          sudo -E concierge prepare -p k8s --juju-channel=4/edge --extra-snaps=astral-uv,just,terraform
 
           mkdir -p ~/.kube
           sudo k8s kubectl config view --raw > ~/.kube/config
