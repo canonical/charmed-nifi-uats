@@ -100,6 +100,11 @@ uv tool run --python 3.12 tox -e deployment -- --model my-model
 A suite only exits non-zero if something `FAILED` or errored, so
 `5 passed, 1 xfailed` is a green run.
 
+Each suite also writes `report-<suite>.xml`, a JUnit report listing every test
+with its duration and, for anything that failed, the message. CI uploads it as
+`<suite>-report` whether the run passed or not, which is the machine-readable
+version of the same results.
+
 **One test is expected to fail.** `test_provenance_survived` is marked `XFAIL`
 because the charm leaves NiFi on its in-memory provenance repository, so
 provenance cannot survive a pod restart. When the charm is fixed, this test will
