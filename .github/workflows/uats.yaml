@@ -98,7 +98,7 @@ jobs:
           sudo snap install concierge --classic
           # The k8s preset already enables the load balancer Traefik needs, and
           # installs jq; only the snaps this repo adds are listed here.
-          sudo -E concierge prepare -p k8s --juju-channel=4/edge --extra-snaps=astral-uv,just,terraform
+          sudo -E concierge prepare -p k8s --extra-snaps=astral-uv,just,terraform
 
           mkdir -p ~/.kube
           sudo k8s kubectl config view --raw > ~/.kube/config
@@ -109,6 +109,20 @@ jobs:
           curl -fL "${goss_base_url}/goss_${GOSS_VERSION#v}_linux_x86_64.tar.gz" \
             | sudo tar xz -C /usr/local/bin goss
           sudo chmod +rx /usr/local/bin/goss
+
+      - name: Check Juju Version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "___ Juju Client ___"
+          juju version
+
+          echo "___ Juju Controllers ___"
+          juju controllers --refresh
+
+          echo "___ Controller Model Agent Version ___"
+          juju model-config -m controller agent-version
 
       - name: Deploy Charmed NiFi
         # The suite name applies terraform/test/<suite>.tfvars when it exists, so
