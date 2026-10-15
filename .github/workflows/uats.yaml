@@ -4,6 +4,11 @@
 name: UATs
 
 on:
+  push:
+      branches:
+        - add-juju-4-uats
+      paths-ignore:
+        - '**.md'
   pull_request:
     paths-ignore:
       - '**.md'
