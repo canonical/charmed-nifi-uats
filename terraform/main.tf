@@ -3,7 +3,7 @@
 
 # Deploy Charmed NiFi through the solution module
 module "charmed_nifi" {
-  source     = "git::https://github.com/canonical/charmed-nifi-solutions//modules/charmed-nifi?ref=track/2.10"
+  source     = "git::https://github.com/rshar26/charmed-nifi-solutions//modules/charmed-nifi?ref=track/2.10"
   model_uuid = var.model_uuid
 
   nifi_k8s = {
