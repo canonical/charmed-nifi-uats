@@ -42,7 +42,7 @@ write-tfvars model_name channel revision="":
     cat > "terraform/${TFVARS}" <<EOF
     model_uuid          = "${MODEL_UUID}"
     channel             = "${channel}"
-    sensitive_props_key = "${KEY}"
+    sensitive_props_key = "secret:${KEY}"
     EOF
 
     if [ -n "${revision}" ]; then
