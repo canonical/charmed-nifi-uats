@@ -74,7 +74,7 @@ jobs:
           # installs jq. only the snaps this repo adds are listed here.
           sudo -E concierge prepare \
             -p k8s \
-            --juju-channel=4/edge \
+            --juju-channel=4.1/edge \
             --extra-snaps=astral-uv,just,terraform
 
           mkdir -p ~/.kube
