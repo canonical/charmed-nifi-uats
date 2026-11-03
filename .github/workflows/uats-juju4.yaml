@@ -5,10 +5,10 @@ name: Juju 4.x UATs
 
 on:
   push:
-      branches:
-        - add-juju-4-uats
-      paths-ignore:
-        - '**.md'
+    branches:
+      - add-juju-4-uats
+    paths-ignore:
+      - '**.md'
   pull_request:
     paths-ignore:
       - '**.md'
@@ -34,98 +34,43 @@ on:
 
 permissions:
   contents: read
-
-env:
-  MODEL: nifi-uats
+  issues: write
 
 jobs:
   uats:
-    name: UATs (${{ matrix.suite }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
+    uses: canonical/workflows-team/.github/workflows/juju-nightly.yaml@main
+    with:
+      juju-channel: 4.1/edge
+      provider: k8s
+      runner: ubuntu-latest
+      timeout-minutes: 90
+      extra-snaps: astral-uv,just,terraform
 
-    strategy:
-      matrix:
-        # One entry per tox environment. Scenario suites are added by their own tickets.
-        suite:
-          - framework
-          - deployment
-          - persistence
-          - ingress
-          - flow
-          - git-registry
-      fail-fast: false
+      extra-env: >-
+        {
+          "MODEL": "nifi-uats",
+          "CHARM_CHANNEL": "${{ inputs.channel || '2.10/edge' }}",
+          "CHARM_REVISION": "${{ inputs.revision || '' }}"
+        }
 
-    concurrency:
-      group: ${{ github.workflow }}-${{ github.ref }}-${{ matrix.suite }}
-      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+      test-commands: >-
+        [
+          "just deploy \"$MODEL\" \"$CHARM_CHANNEL\" \"$CHARM_REVISION\" framework && just uats-suite framework \"$MODEL\"",
+          "just deploy \"$MODEL\" \"$CHARM_CHANNEL\" \"$CHARM_REVISION\" deployment && just uats-suite deployment \"$MODEL\"",
+          "just deploy \"$MODEL\" \"$CHARM_CHANNEL\" \"$CHARM_REVISION\" persistence && just uats-suite persistence \"$MODEL\"",
+          "just deploy \"$MODEL\" \"$CHARM_CHANNEL\" \"$CHARM_REVISION\" ingress && just uats-suite ingress \"$MODEL\"",
+          "just deploy \"$MODEL\" \"$CHARM_CHANNEL\" \"$CHARM_REVISION\" flow && just uats-suite flow \"$MODEL\"",
+          "just deploy \"$MODEL\" \"$CHARM_CHANNEL\" \"$CHARM_REVISION\" git-registry && just uats-suite git-registry \"$MODEL\""
+        ]
 
-    steps:
-      - uses: actions/checkout@v5
+      setup-command: |
+        set -euo pipefail
 
-      - name: Set up operator environment
-        shell: bash
-        run: |
-          set -euo pipefail
+        # Install Goss for the UAT suites.
+        GOSS_VERSION="v0.4.10"
+        goss_base_url="https://github.com/goss-org/goss/releases/download/${GOSS_VERSION}"
 
-          sudo snap install concierge --classic
+        curl -fL "${goss_base_url}/goss_${GOSS_VERSION#v}_linux_x86_64.tar.gz" \
+          | sudo tar xz -C /usr/local/bin goss
 
-          # The k8s preset enables the load balancer Traefik needs and 
-          # installs jq. only the snaps this repo adds are listed here.
-          sudo -E concierge prepare \
-            -p k8s \
-            --juju-channel=4.1/edge \
-            --extra-snaps=astral-uv,just,terraform
-
-          mkdir -p ~/.kube
-          sudo k8s kubectl config view --raw > ~/.kube/config
-
-          # FIXME: install from a snap once goss publishes one.
-          GOSS_VERSION="v0.4.10"
-          goss_base_url="https://github.com/goss-org/goss/releases/download/${GOSS_VERSION}"
-          curl -fL "${goss_base_url}/goss_${GOSS_VERSION#v}_linux_x86_64.tar.gz" \
-            | sudo tar xz -C /usr/local/bin goss
-          sudo chmod +rx /usr/local/bin/goss
-
-      - name: Verify Juju 4.x installation
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "___ Juju Client ___"
-          JUJU_VERSION="$(juju version)"
-          echo "${JUJU_VERSION}"
-
-          if [[ ! "${JUJU_VERSION}" =~ ^4\. ]]; then
-            echo "::error::Expected Juju 4.x client, got ${JUJU_VERSION}"
-            exit 1
-          fi
-
-          echo "___ Juju Controllers ___"
-          juju controllers --refresh
-
-          echo "___ Controller Model Agent Version ___"
-          juju model-config -m controller agent-version
-
-      - name: Deploy Charmed NiFi
-        # The suite name applies terraform/test/<suite>.tfvars when it exists,
-        # so a suite gets the applications it needs and no others.
-        run: >-
-          just deploy "${MODEL}" "${{ inputs.channel || '2.10/edge' }}"
-          "${{ inputs.revision || '' }}" "${{ matrix.suite }}"
-
-      - name: Run the ${{ matrix.suite }} suite
-        run: just uats-suite "${{ matrix.suite }}" "${MODEL}"
-
-      - name: Collect artifacts
-        if: failure()
-        # Avoid collecting twice: a second collection can truncate existing artifacts.
-        run: '[ -d artifacts ] || just collect-artifacts "${MODEL}" artifacts'
-
-      - name: Upload artifacts
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.suite }}-artifacts
-          path: artifacts/
-          retention-days: 7
+        sudo chmod +rx /usr/local/bin/goss
