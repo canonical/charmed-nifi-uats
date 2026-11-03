@@ -13,8 +13,8 @@ on:
     paths-ignore:
       - '**.md'
   schedule:
-    # Nightly against the channel head, offset from the top of the hour.
-    - cron: "17 2 * * *"
+    # Run weekly on Mondays at 02:17 UTC
+    - cron: "17 2 * * 1"
   workflow_dispatch:
     inputs:
       channel:
@@ -42,7 +42,7 @@ jobs:
     with:
       juju-channel: 4.1/edge
       provider: k8s
-      runner: ubuntu-latest
+      runner: ubuntu-26.04
       timeout-minutes: 90
       extra-snaps: astral-uv,just,terraform
 
