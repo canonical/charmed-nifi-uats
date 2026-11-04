@@ -1,0 +1,76 @@
+# Copyright 2026 Canonical Ltd.
+# See LICENSE file for licensing details.
+
+name: Juju 4.x UATs
+
+on:
+  push:
+    branches:
+      - add-juju-4-uats
+    paths-ignore:
+      - '**.md'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+  schedule:
+    # Run weekly on Mondays at 02:17 UTC
+    - cron: "17 2 * * 1"
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Charmhub channel to test against"
+        required: true
+        default: "2.10/edge"
+        type: choice
+        options:
+          - 2.10/edge
+          - 2.10/beta
+          - 2.10/candidate
+          - 2.10/stable
+      revision:
+        description: "Charm revision to pin (optional, defaults to the channel head)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  uats:
+    uses: canonical/workflows-team/.github/workflows/juju-nightly.yaml@main
+    with:
+      juju-channel: 4.1/edge
+      provider: k8s
+      runner: ubuntu-26.04
+      timeout-minutes: 90
+      extra-snaps: astral-uv,just,terraform
+
+      extra-env: >-
+        {
+          "MODEL": "nifi-uats",
+          "CHARM_CHANNEL": "${{ inputs.channel || '2.10/edge' }}",
+          "CHARM_REVISION": "${{ inputs.revision || '' }}"
+        }
+
+      test-commands: >-
+        [
+          "just deploy \"$MODEL\" \"$CHARM_CHANNEL\" \"$CHARM_REVISION\" framework && just uats-suite framework \"$MODEL\"",
+          "just deploy \"$MODEL\" \"$CHARM_CHANNEL\" \"$CHARM_REVISION\" deployment && just uats-suite deployment \"$MODEL\"",
+          "just deploy \"$MODEL\" \"$CHARM_CHANNEL\" \"$CHARM_REVISION\" persistence && just uats-suite persistence \"$MODEL\"",
+          "just deploy \"$MODEL\" \"$CHARM_CHANNEL\" \"$CHARM_REVISION\" ingress && just uats-suite ingress \"$MODEL\"",
+          "just deploy \"$MODEL\" \"$CHARM_CHANNEL\" \"$CHARM_REVISION\" flow && just uats-suite flow \"$MODEL\"",
+          "just deploy \"$MODEL\" \"$CHARM_CHANNEL\" \"$CHARM_REVISION\" git-registry && just uats-suite git-registry \"$MODEL\""
+        ]
+
+      setup-command: |
+        set -euo pipefail
+
+        # Install Goss for the UAT suites.
+        GOSS_VERSION="v0.4.10"
+        goss_base_url="https://github.com/goss-org/goss/releases/download/${GOSS_VERSION}"
+
+        curl -fL "${goss_base_url}/goss_${GOSS_VERSION#v}_linux_x86_64.tar.gz" \
+          | sudo tar xz -C /usr/local/bin goss
+
+        sudo chmod +rx /usr/local/bin/goss
