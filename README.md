@@ -97,18 +97,13 @@ uv tool run --python 3.12 tox -e deployment -- --model my-model
 | `XFAIL` | A known bug, with the reason printed next to it. Not a failure. |
 | `SKIPPED` | The check does not apply here. The reason says why. |
 
-A suite only exits non-zero if something `FAILED` or errored, so
-`5 passed, 1 xfailed` is a green run.
+A suite only exits non-zero if something `FAILED` or errored; `XFAIL` and
+`SKIPPED` results keep it green.
 
 Each suite also writes `report-<suite>.xml`, a JUnit report listing every test
 with its duration and, for anything that failed, the message. CI uploads it as
 `<suite>-report` whether the run passed or not, which is the machine-readable
 version of the same results.
-
-**One test is expected to fail.** `test_provenance_survived` is marked `XFAIL`
-because the charm leaves NiFi on its in-memory provenance repository, so
-provenance cannot survive a pod restart. When the charm is fixed, this test will
-start passing and the suite will go red to tell you to remove the marker.
 
 **Skips are normal.** `ingress` skips without `--traefik-app`, and `git-registry`
 skips without `--git-app`. If a whole suite skips when you did not expect it to,
